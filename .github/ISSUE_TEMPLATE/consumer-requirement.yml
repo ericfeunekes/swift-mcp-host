@@ -1,0 +1,57 @@
+name: Consumer requirement
+description: Request a change to the shared MCP contract from a project that uses this library.
+title: "[consumer] "
+labels: ["consumer-request"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        See docs/consumers.md. Use synthetic values only: no real user data, credentials or hostnames.
+  - type: input
+    id: consumer
+    attributes:
+      label: Consumer
+      description: The project that needs this.
+    validations:
+      required: true
+  - type: textarea
+    id: need
+    attributes:
+      label: Need
+      description: What the agent or user must be able to do, as an outcome rather than an API.
+    validations:
+      required: true
+  - type: textarea
+    id: why-library
+    attributes:
+      label: Why the library
+      description: Why this belongs in the shared contract rather than in the consumer.
+    validations:
+      required: true
+  - type: textarea
+    id: example
+    attributes:
+      label: Contract example
+      description: The MCP request, the expected result or error, and the protocol revision.
+      render: json
+    validations:
+      required: true
+  - type: input
+    id: clients
+    attributes:
+      label: Clients
+      description: Which clients must work with it.
+    validations:
+      required: true
+  - type: textarea
+    id: spec
+    attributes:
+      label: Spec basis
+      description: MCP section, SEP or client documentation, if any.
+  - type: textarea
+    id: proof
+    attributes:
+      label: Proof available
+      description: What the consumer can run to show it works.
+    validations:
+      required: true
