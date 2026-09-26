@@ -34,16 +34,67 @@ The library owns a small set of Codable protocol types rather than using the off
 
 ## Typed tools
 
-A tool is defined by:
+A tool is a struct. Its stored properties are the arguments, its `///` comment is the tool description, and each property's `///` comment is that argument's description:
 
-- an input type whose schema, decoding and validation come from one declaration, using swift-json-schema's schema builder and `@Schemable` macro, with doc comments as descriptions;
-- an output type declared the same way;
-- an error type, thrown with Swift typed throws, conforming to a library protocol that requires a code, a message and a next step for each case;
-- annotations and descriptions supplied through a library macro that fails compilation when any are missing.
+```swift
+import MCPHostCore
 
-Validation runs the parser, which accumulates every problem with its JSON Pointer, then maps the problems to the agent error shape in the [requirements](requirements.md#argument-errors). The Swift handler receives only a fully valid value.
+/// Read recent messages from one conversation, newest first. Use after find_chats and
+/// pass its chatID; do not pass a person's name.
+@Schemable
+@MCPTool(title: "Read messages", readOnly: true, destructive: false, idempotent: true, openWorld: false)
+struct ReadMessages {
+    /// The chat to read, from find_chats.
+    let chatID: String
+    /// How many messages to return.
+    @NumberOptions(.minimum(1), .maximum(100))
+    var limit: Int = 25
+    /// Reading order.
+    @SchemaOptions(.default("newest"))
+    var order: Order = .newest
 
-The exact authoring API is an [open decision](decisions.md#owner-decisions) and will be shown as a worked example before it is built.
+    func call(context: ToolContext) async throws(ReadError) -> MessagePage { ... }
+}
+
+@Schemable @MCPEnum
+enum Order: String {
+    /// Most recent message first.
+    case newest
+    /// Earliest message first.
+    case oldest
+}
+
+/// One page of messages.
+@Schemable @MCPSchema
+struct MessagePage: Encodable { ... }
+
+enum ReadError: ToolError {
+    case chatNotFound(String)
+    var code: String { "chat_not_found" }
+    var message: String { ... }
+    var nextStep: String { "Call find_chats and pass one of its chatID values." }
+}
+```
+
+| Declaration | Needs | Checked |
+|---|---|---|
+| `@MCPTool` struct | `@Schemable`; a doc comment; a doc comment on every stored property; all four annotations; a title | Compile time (macro diagnostics; the annotation arguments have no defaults) |
+| Tool name | Defaults to the struct name in snake_case; `name:` overrides; `^[A-Za-z0-9_-]{1,64}$`; unique | Compile time for the pattern, registration for uniqueness |
+| `call` | `throws(E)` with `E: ToolError`, or no `throws` | Compile time: an untyped `throws` cannot satisfy the protocol |
+| Nested and output structs | `@Schemable @MCPSchema`, `Encodable` for outputs, doc comments on every property | Compile time for docs; registration for a nested type missing `@MCPSchema` |
+| Enums | `@Schemable @MCPEnum`, plain-value cases, a doc comment on every case | Compile time for docs; registration for an enum missing `@MCPEnum` |
+| Non-primitive defaults | `@SchemaOptions(.default(...))` with the same value, because swift-json-schema only writes defaults for primitive types | Compile time |
+| Description length | At least `ToolRules.minimumDescriptionLength` (40) characters | Registration |
+| Key renaming | Not supported: `@Schemable(keyStrategy:)` and `.key(...)` are rejected so property names are field names | Compile time |
+
+`ToolRegistry` prepares each tool once at startup. It takes the generated schema and:
+
+- sets `additionalProperties: false` on every object;
+- removes properties that have defaults from `required`;
+- appends each enum's case descriptions to the field description;
+- rejects keywords outside the portable profile.
+
+It reports every problem in one error. A call is then validated against that prepared schema. So what the agent sees is exactly what is enforced. Every failure is mapped to the argument error shape, defaults are filled in, the arguments are parsed into the struct, and the handler runs. Output is encoded with sorted keys and ISO 8601 dates and checked against the output schema. A mismatch is a server fault, not an agent error.
 
 ## Caller identity
 

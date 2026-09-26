@@ -8,7 +8,7 @@ It is built for local macOS utilities that host their own engine (for example [m
 
 ## Status
 
-Contract written; implementation starting. The package builds and its schema harness runs, but no server behavior exists yet. Nothing is released.
+The authoring layer works: tools are declared with macros, registered, validated and called, with agent-facing errors. The protocol pipeline and the HTTP and stream adapters are not built yet. Nothing is released.
 
 ## Development
 

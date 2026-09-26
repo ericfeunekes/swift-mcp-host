@@ -29,7 +29,8 @@ A claim is proven at the boundary it describes. Reading the source, or a unit te
 | Layer | Command | State |
 |---|---|---|
 | Core, schema contract | `swift test` | Running: revision and identity rules, and the schema harness (every official 2026-07-28 example validates; a broken message fails; vendored revisions match supported revisions) |
-| Authoring rules, portable profile | `swift test` | Waits on the [authoring API decision](decisions.md#owner-decisions) |
+| Authoring rules | `swift test` (`MCPHostMacrosTests`) | Running: macro expansion and every diagnostic |
+| Portable profile, argument errors, registration | `swift test` (`ToolRegistryTests`) | Running: prepared schemas, defaults, aggregated argument issues, tool errors, registration failures |
 | HTTP and stream boundaries | `swift test` | Waits on the adapters |
 | Conformance | `npx @modelcontextprotocol/conformance server --url <example server>` | Waits on the example server |
 | Interoperability | Pinned TypeScript and Python clients | Waits on the example server |
