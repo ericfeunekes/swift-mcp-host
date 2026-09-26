@@ -26,4 +26,17 @@ A claim is proven at the boundary it describes. Reading the source, or a unit te
 
 ## Commands
 
-To be added with the package. Each layer above gets one named command.
+| Layer | Command | State |
+|---|---|---|
+| Core, schema contract | `swift test` | Running: revision and identity rules, and the schema harness (every official 2026-07-28 example validates; a broken message fails; vendored revisions match supported revisions) |
+| Authoring rules, portable profile | `swift test` | Waits on the [authoring API decision](decisions.md#owner-decisions) |
+| HTTP and stream boundaries | `swift test` | Waits on the adapters |
+| Conformance | `npx @modelcontextprotocol/conformance server --url <example server>` | Waits on the example server |
+| Interoperability | Pinned TypeScript and Python clients | Waits on the example server |
+
+CI runs `swift build --build-tests` and `swift test` on macOS with Xcode 16.4 (Swift 6.1).
+
+## Schema harness notes
+
+- 2025-06-18 is published as draft-07; the validator implements only 2020-12. The harness evaluates it as 2020-12, and a test proves that document uses none of the keywords whose meaning differs (`additionalItems`, `dependencies`, array-form `items`).
+- The official examples exist only for 2026-07-28. Earlier revisions are checked through the messages the example server emits.

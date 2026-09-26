@@ -7,10 +7,10 @@ The library separates what every MCP server must get right (the protocol contrac
 | Target | Owns | Depends on |
 |---|---|---|
 | `MCPHostCore` | Protocol value types, JSON-RPC handling, version negotiation, the request pipeline, tool registry, validation, error rendering, caller identity | swift-json-schema |
-| `MCPHostMacros` | Compile-time checks that tool types and errors carry descriptions and annotations | swift-syntax |
+| `MCPHostMacros` (not yet added) | Compile-time checks that tool types and errors carry descriptions and annotations; added with the [authoring API decision](decisions.md#owner-decisions) | swift-syntax |
 | `MCPHostHTTP` | Streamable HTTP on loopback or a Unix socket: origin, host, header and body-size checks, cancellation on disconnect | `MCPHostCore`, Hummingbird |
 | `MCPHostStream` | Newline-delimited streams over stdio or file handles | `MCPHostCore` |
-| `MCPHostTesting` | A synthetic example server, a client for tests, schema-validation helpers and fixtures | `MCPHostCore` |
+| `MCPHostTesting` | Validation against the official MCP schemas today; a synthetic example server and a test client later | `MCPHostCore`, swift-json-schema |
 
 A consumer depends on `MCPHostCore` plus the adapters it uses. `MCPHostCore` has no transport or web-framework dependency.
 

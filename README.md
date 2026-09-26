@@ -8,7 +8,18 @@ It is built for local macOS utilities that host their own engine (for example [m
 
 ## Status
 
-Design stage. The contract is being written before the code. Nothing here is released.
+Contract written; implementation starting. The package builds and its schema harness runs, but no server behavior exists yet. Nothing is released.
+
+## Development
+
+Swift 6.1 or later on macOS 14 or later:
+
+```sh
+swift build --build-tests
+swift test
+```
+
+[Validation](docs/validation.md#commands) lists what each test layer proves and what is still waiting.
 
 ## What it provides
 

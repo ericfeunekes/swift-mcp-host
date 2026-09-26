@@ -13,14 +13,14 @@ Accepted choices, owner decisions still open, and engineering questions a test o
 - **Transports:** Streamable HTTP through Hummingbird, and newline-delimited streams. JSON responses only. Maintainer, from research.
 - **Schema and validation engine:** swift-json-schema (schema builder, `@Schemable`, accumulated validation errors with JSON Pointers, 2020-12). Maintainer, from research.
 - **Error results and `outputSchema`.** The spec's rule that structured results conform to the output schema is read as applying to successful results. Error results carry the library's error shape instead. The official TypeScript and Python clients skip output validation when `isError` is set. Maintainer.
+- **Argument errors are tool errors under every revision.** Schema and type failures return `isError: true` results with the detailed error shape. Basis: SEP-1303 (2025-11-25) classifies input validation errors as tool execution errors so models can self-correct, and clients SHOULD show tool errors to the model but only MAY show protocol errors. Accepted deviations: the spec's own `-32602` example for a missing property, and 2025-06-18, which listed invalid arguments as a protocol error. Owner.
 - **Legacy HTTP cancellation is ignored.** Without sessions a `notifications/cancelled` request id is ambiguous across callers, so closing the connection is the only HTTP cancellation signal. Maintainer, from *2026-07-28 basic/patterns/cancellation*.
 
 ## Owner decisions
 
 - **License.** MIT is in place, matching messages-swift.
-- **Argument errors as tool errors under every revision.** Proposed: return schema and type failures as `isError: true` results with the detailed error shape. Basis: SEP-1303 (2025-11-25) classifies input validation errors as tool execution errors so models can self-correct, and clients SHOULD show tool errors to the model but only MAY show protocol errors. Deviations: the spec's own `-32602` example for a missing property, and 2025-06-18, which listed invalid arguments as a protocol error.
 - **2025-03-26 support.** Adding it means accepting HTTP requests without `MCP-Protocol-Version` and receiving batches. Decide after the client survey in [engineering questions](#engineering-questions); messages-swift's own tests currently initialize with 2025-03-26.
-- **Authoring API shape.** Macro-first (annotate a struct and its handler) or builder-first (declare fields in a result builder). A worked example of each will be shown before implementation.
+- **Authoring API shape.** How a tool author declares a tool: macro-first (a normal Swift struct with doc comments, checked by the compiler) or builder-first (fields declared in code, no compiler plugin). Proposed: macro-first, with the builder as the escape hatch for shapes the macro cannot express. The `MCPHostMacros` target is added once this is settled.
 - **Minimum description length** for tools, and whether it is a hard rule or a warning.
 - **Consumer intake channel.** GitHub Issues (current default), or also requirement files in the repository.
 
