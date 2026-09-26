@@ -4,54 +4,91 @@
 
 Make it easy, obvious and the default for a Swift utility to expose tools that agents use correctly the first time and recover from quickly when they do not. The library owns the MCP contract so that each utility owns only its tools.
 
-Spec citations use the revision date and page, for example *2026-07-28 server/tools*. Guidance citations are listed in [references](references.md). Where a requirement goes beyond the spec, it says so.
+Spec citations give the revision and page, for example *2026-07-28 server/tools*; the source files are listed in [references](references.md). A requirement that goes beyond the spec says so.
 
 ## Scope
 
 - Tools-only servers: tool listing, tool calls and the protocol lifecycle needed to reach them.
-- Supported protocol revisions: 2025-06-18, 2025-11-25 and 2026-07-28. Older revisions are rejected with the supported list. Whether real clients still send earlier revisions is an [open question](decisions.md#engineering-questions).
-- Transports: Streamable HTTP and newline-delimited streams. The legacy HTTP+SSE transport is not supported (deprecated since 2025-03-26, formally *2026-07-28 deprecated*).
-- Out of scope until accepted through the [consumer process](consumers.md): resources, prompts, completion, tasks, MCP Apps, subscriptions, sampling, elicitation, roots, logging and OAuth. The [architecture](architecture.md#extension-points) reserves a place for each.
+- Transports: Streamable HTTP and newline-delimited streams (stdio and local sockets). The legacy HTTP+SSE transport is not supported (*2026-07-28 deprecated*).
+- Out of scope until accepted through the [consumer process](consumers.md): resources, prompts, completion, tasks, MCP Apps, subscriptions, progress, sampling, elicitation, roots, logging and OAuth. The [architecture](architecture.md#extension-points) reserves a place for each.
 
-## Protocol lifecycle
+## Protocol revisions
 
-- For 2025-06-18 and 2025-11-25, answer `initialize` with the negotiated version, server information, `tools` capability and instructions, and accept `notifications/initialized`. The server does not issue `Mcp-Session-Id`; the header is optional in those revisions (*2025-11-25 basic/transports*).
-- For 2026-07-28, implement `server/discover` returning `supportedVersions`, capabilities, instructions, `ttlMs` and `cacheScope` (*2026-07-28 server/discover*, SEP-2575, SEP-2549). Read `io.modelcontextprotocol/protocolVersion` and `io.modelcontextprotocol/clientCapabilities` from every request's `_meta`; reject a request missing either with `-32602` (*2026-07-28 basic*). Return `io.modelcontextprotocol/serverInfo` in result `_meta` and `resultType: "complete"` on every result (SEP-2322).
-- Reject an unsupported revision with `-32022` and the supported list under 2026-07-28, or the negotiated fallback under `initialize` (*2026-07-28 basic/versioning*).
-- Answer `ping` for revisions that define it. `ping` is removed in 2026-07-28.
-- No state spans requests. Any state a tool needs across calls is an explicit handle argument bound to the caller identity (*2026-07-28 security best practices*, state handle hijacking).
-- JSON-RPC batches are rejected (removed in 2025-06-18).
+The server is dual-era (*2026-07-28 basic/versioning*, backward compatibility):
+
+- **Modern:** 2026-07-28. Every request carries its revision and client capabilities in `_meta`. No handshake and no state.
+- **Legacy:** 2025-11-25 and 2025-06-18, reached through `initialize`. Support for 2025-03-26 is an [open decision](decisions.md#owner-decisions).
+
+Both eras are served on the same endpoint or process.
+
+### Selecting the revision
+
+| Transport | Signal | Result |
+|---|---|---|
+| Any | Request `_meta` carries `io.modelcontextprotocol/protocolVersion` | Modern. A supported value is served under that revision; an unsupported value gets `-32022` (UnsupportedProtocolVersion) listing supported versions. |
+| Any | `initialize` request | Legacy. The server answers with the client's requested version when it is a supported legacy version, and otherwise with 2025-11-25 (*2025-11-25 basic/lifecycle*). It never answers `initialize` with 2026-07-28. |
+| stdio | Any other request before `initialize` | Error `-32602` stating that the request needs either modern `_meta` or a prior `initialize`. |
+| stdio | A request after `initialize`, without modern `_meta` | Served under the revision negotiated by `initialize`. This is the only state the server keeps, and it lasts for the process (*2026-07-28 basic/versioning*). |
+| HTTP | A request without modern `_meta` and with `MCP-Protocol-Version` naming a supported legacy revision | Served statelessly under that revision. The server never issues `Mcp-Session-Id`, which is optional in those revisions (*2025-11-25 basic/transports*), so no state links requests. |
+| HTTP | `initialize` without `MCP-Protocol-Version` | Accepted. Legacy clients send the header only after `initialize` (*2025-11-25 basic/transports*). |
+| HTTP | Any other request without modern `_meta` and without `MCP-Protocol-Version` | `400` with `-32600` stating that the header is required, unless 2025-03-26 support is accepted, in which case it is served as 2025-03-26 (*2026-07-28 basic/transports/streamable-http*). |
+
+### Modern requests
+
+- Reject a request missing `io.modelcontextprotocol/protocolVersion` or `io.modelcontextprotocol/clientCapabilities` with `-32602` (*2026-07-28 basic*).
+- `io.modelcontextprotocol/clientInfo` is recorded for logging only.
+- Implement `server/discover` returning `supportedVersions`, capabilities, instructions, `ttlMs` and `cacheScope` (*2026-07-28 server/discover*).
+- Every result carries `resultType: "complete"` and `io.modelcontextprotocol/serverInfo` in `_meta` (*2026-07-28 basic*).
+
+### Legacy requests
+
+- `initialize` returns the negotiated version, server information, the `tools` capability and instructions. Accept `notifications/initialized`.
+- Answer `ping`. `ping` is removed in 2026-07-28 and is `-32601` there.
+- Reject JSON-RPC batches with `-32600` (removed in 2025-06-18).
 
 ## Server description
 
-- A server declares a name, title, version and instructions. Instructions explain how the tools fit together and when to use which; they do not repeat tool descriptions (*2026-07-28 server/discover*).
-- Description, icons and website are carried for 2025-11-25 and later (SEP-973).
+- A server declares a name, title, version and instructions. Instructions explain how the tools fit together and when to use which. They do not repeat tool descriptions (*2026-07-28 schema*, DiscoverResult).
+- `description`, `icons` and `websiteUrl` are sent for 2025-11-25 and later (*2025-11-25 schema*, Implementation).
+- `capabilities.tools.listChanged` is `false`: the tool list is fixed for the lifetime of the process.
 
 ## Tools
 
 ### Definition
 
 - A tool is registered from a Swift input type, an output type, a handler and a declared error type. Registration fails at compile time where Swift can enforce it and otherwise at server construction, with a message naming the tool and the missing item.
-- Required on every tool: a name, a title, a description and explicit values for `readOnlyHint`, `destructiveHint`, `idempotentHint` and `openWorldHint`. The spec defaults `destructiveHint` and `openWorldHint` to true and the others to false (*2026-07-28 server/tools*, ToolAnnotations); the library requires the author to choose rather than inherit them. This goes beyond the spec.
-- Required on every input and output property and every enum case: a description. A Swift doc comment is the default source. This goes beyond the spec.
-- Names match `^[A-Za-z0-9_-]{1,64}$` and are unique within the server. This is the intersection of the MCP recommendation (*2025-11-25 server/tools*, SEP-986) and the Anthropic and OpenAI tool-name rules. It goes beyond the spec.
-- The description states what the tool does, when to use it, when not to, and its limits. The library rejects a description shorter than a minimum length; see the [open decision](decisions.md#owner-decisions) on the threshold.
+- Every tool needs a name, a title, a description and explicit values for `readOnlyHint`, `destructiveHint`, `idempotentHint` and `openWorldHint`. The spec defaults `destructiveHint` and `openWorldHint` to true and the others to false (*2026-07-28 schema*, ToolAnnotations). The library makes the author choose instead of inheriting them. This goes beyond the spec.
+- `openWorldHint` is true when the tool reaches the open internet or arbitrary external entities. A bounded private account or local data store is not open-world.
+- Every input and output property and every enum case needs a description. A Swift doc comment is the default source. This goes beyond the spec.
+- Names match `^[A-Za-z0-9_-]{1,64}$` and are unique within the server. This is the intersection of the MCP recommendation (*2025-11-25 server/tools*, SEP-986) and the Anthropic and OpenAI tool-name rules, so it goes beyond the spec.
+- The description states what the tool does, when to use it, when not to, and its limits. Enforcement of a minimum length is an [open decision](decisions.md#owner-decisions).
 
 ### Schemas
 
 - `inputSchema` and `outputSchema` are generated from the Swift types. Hand-written schemas are not accepted.
-- Schemas use JSON Schema 2020-12 and do not emit `$schema` for another dialect (*2025-11-25 basic*, SEP-1613). Clients have rejected non-default dialects in practice.
+- Schemas use JSON Schema 2020-12 and never declare another dialect (*2025-11-25 basic*, SEP-1613).
 - The input root is `type: "object"`. A tool with no inputs emits `{"type":"object","additionalProperties":false}` (*2026-07-28 server/tools*).
-- By default schemas use a portable subset: every object sets `additionalProperties: false`; no `allOf`, `not`, `if`/`then`/`else`, `dependentRequired` or `dependentSchemas`; no remote `$ref`. This keeps schemas accepted by OpenAI strict mode and by the clients with known validator gaps. Using a wider 2020-12 feature (allowed by *2026-07-28 basic*, SEP-2106) is an explicit opt-in on that tool. This goes beyond the spec.
-- Enums are preferred to free text wherever the value set is closed. Constraints the type knows (ranges, lengths, patterns, formats, item counts) appear in the schema.
-- Output types with an `outputSchema` always produce `structuredContent` that conforms to it (*2026-07-28 server/tools*, output schema). Some clients fail a call that declares an output schema and returns none.
+- By default schemas use a **portable profile**:
+  - every object sets `additionalProperties: false`;
+  - no `allOf`, `oneOf`, `not`, `if`/`then`/`else`, `dependentRequired`, `dependentSchemas` or remote `$ref`;
+  - a closed value set is a plain `enum`, and each case's description is listed in the property description, because `enum` cannot carry per-case descriptions portably;
+  - an optional Swift property is omitted from `required`. Whether to emit OpenAI strict-mode shape instead (every property required, optional values nullable) is an [engineering question](decisions.md#engineering-questions).
+
+  A wider 2020-12 feature (allowed by *2026-07-28 basic*, SEP-2106) is an explicit opt-in on that tool. The profile goes beyond the spec.
+- Numeric ranges, string lengths, patterns, formats and item counts appear in the schema when the type declares them. Which of these the portable profile keeps is decided by the strict-mode test in [decisions](decisions.md#engineering-questions).
+- Schemas never emit `x-mcp-header` (*2026-07-28 server/tools*).
+- A tool with an output type always returns `structuredContent` that conforms to its `outputSchema` (*2026-07-28 server/tools*, output schema). Some clients fail a call that declares an output schema and returns none.
 
 ### Results
 
-- A successful call returns `structuredContent` and the same value serialized as JSON in a text content block. The text block is derived from the structured value; the author cannot supply one without the other (*2026-07-28 server/tools*, backwards compatibility SHOULD).
-- A tool may add image, audio, resource-link or embedded-resource blocks after the text block.
+- A successful call returns `structuredContent` and the same value serialized as JSON in the first text content block. The text is derived from the structured value; the author cannot supply one without the other (*2026-07-28 server/tools*, backwards compatibility).
+- A tool may add image, audio, resource-link or embedded-resource blocks after that text block.
 - Results that can be large are bounded. The library supplies a standard truncation and pagination shape whose message tells the agent how to narrow the request.
-- `tools/list` is returned in a stable order and does not vary by connection (*2026-07-28 server/tools*). It carries `ttlMs` and `cacheScope` under 2026-07-28.
+
+### Listing
+
+- `tools/list` returns every tool in one page, in registration order. A request with any `cursor` gets `-32602` (*2026-07-28 server/tools*).
+- The list does not vary by caller or connection. Under 2026-07-28 it carries `cacheScope: "public"` and a `ttlMs` configured by the server, default 300000 (*2026-07-28 server/utilities/caching*).
 
 ## Errors
 
@@ -59,63 +96,93 @@ Every error an agent can see is specific, typed and actionable. Nothing reports 
 
 ### Protocol errors
 
-JSON-RPC errors are reserved for requests the model cannot fix by changing arguments (*2025-11-25 server/tools*, error handling, SEP-1303):
+JSON-RPC errors are reserved for requests the model cannot fix by changing arguments (*2025-11-25 server/tools*, error handling). The HTTP status applies to the Streamable HTTP transport (*2026-07-28 basic/transports/streamable-http*):
 
-| Case | Code |
-|---|---|
-| Unparseable JSON | `-32700` |
-| Not a valid JSON-RPC request, or a batch | `-32600` |
-| Unknown method | `-32601` |
-| Unknown tool, missing required `_meta`, `CallToolRequest` shape violation | `-32602` |
-| `Mcp-Method` or `Mcp-Name` header disagrees with the body (2026-07-28) | `-32020` |
-| Unsupported protocol revision (2026-07-28) | `-32022` |
-| Unexpected server failure | `-32603` |
+| Case | Code | HTTP, modern | HTTP, legacy |
+|---|---|---|---|
+| Unparseable JSON | `-32700` | 400 | 400 |
+| Not a single valid JSON-RPC request or notification, including a batch | `-32600` | 400 | 400 |
+| Unknown method | `-32601` | 404 | 200 |
+| Unknown tool, missing required `_meta`, request shape violation, unsupported `cursor` | `-32602` | 400 | 200 |
+| Header disagrees with the body, or a required header is missing or malformed | `-32020` | 400 | n/a |
+| Unsupported protocol revision | `-32022` | 400 | n/a |
+| Failure inside the library | `-32603` | 500 | 500 |
 
-An unexpected failure message names the tool and says the call can be retried or reported; it does not expose internal error text. The full error is available to the host through a logging hook.
+- `MCP-Protocol-Version` must equal the `_meta` revision on modern requests. `Mcp-Method` must equal the method and `Mcp-Name` the tool name on `tools/call`, decoding the `=?base64?…?=` form (*2026-07-28 basic/transports/streamable-http*, SEP-2243).
+- A `-32603` message names the tool and says the failure is on the server side, not the arguments. It does not expose internal error text. The full error goes to the host's logging hook.
 
 ### Argument errors
 
-- Arguments that fail the tool's input schema or type validation return a tool result with `isError: true`, not a protocol error. This follows the spec's classification of input validation errors as tool execution errors so the model can self-correct (*2025-11-25 server/tools*, SEP-1303). The spec's own example uses `-32602` for a missing required property; the reading chosen here is recorded in [decisions](decisions.md#accepted).
-- Validation collects every problem, not the first. Each problem has:
-  - `type`: a stable snake_case identifier such as `missing`, `wrong_type`, `too_long`, `out_of_range`, `not_in_enum`, `unexpected_property`, `invalid_format`.
-  - `path`: a JSON Pointer to the value.
+- Arguments that fail the tool's input type return a tool result with `isError: true`, not a protocol error, under every revision. The spec classifies input validation errors as tool execution errors so the model can self-correct (*2025-11-25 server/tools*, SEP-1303). This deviates from the spec's `-32602` example for a missing property and from 2025-06-18, which listed invalid arguments as a protocol error; see [decisions](decisions.md#owner-decisions).
+- Validation collects every problem, not only the first. Each problem has:
+  - `type`: a stable snake_case identifier: `missing`, `wrong_type`, `too_short`, `too_long`, `out_of_range`, `not_in_enum`, `unexpected_property`, `invalid_format`, `pattern_mismatch`, `too_few_items`, `too_many_items`.
+  - `path`: a JSON Pointer to the value. For a missing property it points to where the property belongs, such as `/chatID`.
   - `message`: one sentence naming the field and what was wrong.
-  - `input`: the rejected value, bounded in size.
+  - `input`: the rejected value, truncated to a bounded size. Absent for `missing`.
   - `context`: the constraint that failed, such as `{"maximum": 100}` or the allowed enum values with their descriptions.
   - `hint`: what to send instead, when the library can derive one.
-- The problems are returned as `structuredContent` under a fixed error shape and rendered as a short numbered text list. The shape is part of the public contract and is versioned.
 
 ### Tool errors
 
-- A handler reports expected failures by throwing its declared error type. Each case supplies a stable code, a message and a next step for the agent, for example "Call `find_chats` first and pass its `chatID`." Optional details are structured.
-- An expired or unknown handle is a tool error that says so and tells the agent how to obtain a new one (*2026-07-28 server/tools*, stateful tools).
-- A handler cannot return `isError: true` without a typed error.
+- A handler declares its error type with Swift typed throws, `throws(E)`, where `E` conforms to the library's tool error protocol. Each case supplies a stable snake_case code, a message and a next step for the agent, for example "Call `find_chats` first and pass its `chatID`." Details are optional and structured.
+- An expired or unknown handle is a tool error that says so and tells the agent how to get a new one (*2026-07-28 server/tools*, stateful tools).
+- A handler cannot produce `isError: true` except by throwing its declared error type.
+
+### Error result shape
+
+Argument errors and tool errors share one shape, versioned by `schemaVersion`:
+
+```json
+{
+  "error": {
+    "schemaVersion": 1,
+    "code": "invalid_arguments",
+    "message": "2 problems with the arguments to read_messages.",
+    "nextStep": "Fix the listed fields and call read_messages again.",
+    "issues": [
+      {"type": "missing", "path": "/chatID", "message": "chatID is required.", "context": {}, "hint": "Call find_chats to get a chatID."},
+      {"type": "out_of_range", "path": "/limit", "message": "limit must be at most 100.", "input": 500, "context": {"maximum": 100}}
+    ]
+  }
+}
+```
+
+- `code` is `invalid_arguments` for argument errors and the handler's code for tool errors. `issues` is present only for argument errors; `details` only for tool errors.
+- The first text block is a short readable rendering: the message, a numbered list of issues and the next step. It is not JSON; the structured value carries the machine-readable form.
+- Error results do not conform to the tool's `outputSchema`. The spec's conformance rule is read as applying to successful results; see [decisions](decisions.md#accepted).
+- Changing the shape increments `schemaVersion` and is called out in release notes.
 
 ## Caller identity
 
-- Every request carries a caller identity: a short identifier for the configured client connection, such as `claude-code`, `codex`, `chatgpt-tunnel` or `muse`.
-- The adapter resolves it from configuration the model cannot see or change: a launch argument for stream adapters, and a URL path segment or configured header for HTTP. It never comes from tool arguments or client-reported `clientInfo`.
-- The server declares the identities it accepts. A request with a missing or unknown identity is rejected before dispatch. There is no default identity.
-- Handlers and the host's logging hook receive the identity. Tailscale identity headers, when present, are carried alongside it and are informational; they are not the caller identity.
+- Every request carries a caller identity: a short label for a configured client connection, such as `claude-code`, `codex`, `chatgpt-tunnel` or `muse`. It matches `^[a-z0-9-]{1,32}$`.
+- The identity is a label for attribution and per-caller behavior, **not a security boundary**. Anyone who can reach the endpoint can present any label. Access control is the transport's reachability: loopback, a user-private Unix socket, or Tailscale policy. Handles bound to an identity are attributed, not authenticated.
+- The adapter resolves the identity from configuration the model cannot see or change. It never comes from tool arguments or `clientInfo`.
+  - Stream adapter: set at launch. An identity the server does not accept stops the process at startup with a message naming it.
+  - HTTP adapter: a path segment, `<base>/c/<identity>/mcp`. A request to an unknown identity gets `404` with a JSON-RPC error with no `id`, code `-32600`, whose message says the client URL must use an identity configured for this server.
+- The server declares the identities it accepts. There is no default identity.
+- Handlers and the logging hook receive the identity. Tailscale identity headers, when present, are passed alongside it as information.
 
 ## Transports
 
 ### Streamable HTTP
 
-- Serve MCP at one path on a loopback address or a Unix domain socket. Never bind a non-loopback interface.
-- POST carries one JSON-RPC message. Requests are answered with `application/json`; streaming responses are not used. Notifications and responses from the client are answered with `202 Accepted`. GET and DELETE are answered with `405` (*2025-11-25 basic/transports*).
-- Reject an invalid `Origin` with `403` (*2025-11-25 basic/transports*). Accept only configured `Host` values, to prevent DNS rebinding.
-- Enforce `MCP-Protocol-Version` against the negotiated or per-request revision, and `Mcp-Method` and `Mcp-Name` under 2026-07-28 (SEP-2243).
-- Limit request body size before parsing.
-- Concurrent requests are isolated: request context never leaks between calls, including calls that reuse the same JSON-RPC id.
-- A client disconnect or `notifications/cancelled` cancels the running handler.
+- Listen on a loopback address or a Unix domain socket. Never bind a non-loopback interface (*2026-07-28 basic/transports/streamable-http*, security).
+- Serve one MCP path per accepted identity under a configured base path.
+- POST carries one JSON-RPC message. Requests are answered with `application/json`. Accepted notifications get `202 Accepted` with no body. GET and DELETE get `405` (*2025-11-25 basic/transports*).
+- An `Origin` header that is present and not configured gets `403` (*2026-07-28 basic/transports/streamable-http*). A `Host` that is not configured gets `403`, to prevent DNS rebinding.
+- Enforce the header rules in [protocol errors](#protocol-errors).
+- Limit the request body size before parsing; an oversized body gets `413`.
+- Concurrent requests are isolated: no request context is shared between calls, including calls that reuse a JSON-RPC id.
+- Closing the connection cancels the running handler. That is the only HTTP cancellation signal (*2026-07-28 basic/patterns/cancellation*). A legacy `notifications/cancelled` over HTTP gets `202` and is otherwise ignored, because without sessions its request id is ambiguous.
 
 ### Newline-delimited stream
 
 - One JSON-RPC message per line in each direction, UTF-8, with a size limit per message. Only protocol messages are written to the output stream.
-- Suitable for stdio and for local Unix-socket bridges.
+- `notifications/cancelled` cancels the named running request (*2026-07-28 basic/patterns/cancellation*).
+- End of input stops the server after in-flight requests finish or are cancelled.
 
 ## Extensibility
 
-- New capabilities, content types and request stages attach through the extension points in the [architecture](architecture.md#extension-points) without changing the tool API.
-- Each extension point is exercised by a test-only extension so that the seam is proven while no extension ships.
+- New capabilities, protocol extensions, content types, request stages and result types attach through the [extension points](architecture.md#extension-points) without changing how existing tools are written.
+- Extensions that need streaming responses, HTTP authentication or multi-round-trip state need adapter or pipeline work described with each extension point. They are not free.
+- Each extension point is exercised by a test-only extension, so the seam is proven while none ships.

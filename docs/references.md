@@ -8,6 +8,7 @@ Sources behind the requirements, checked on 2026-09-26. Re-check a source before
 - Specification source, schemas and examples: <https://github.com/modelcontextprotocol/modelcontextprotocol> (`schema/<revision>/schema.ts`, `schema.json`, `examples/`; `docs/specification/<revision>/`). Vendored schemas will record the commit they were taken from.
 - 2026-07-28 changelog: <https://github.com/modelcontextprotocol/modelcontextprotocol/blob/main/docs/specification/2026-07-28/changelog.mdx>. Release candidate notes: <https://blog.modelcontextprotocol.io/posts/2026-07-28-release-candidate/>.
 - SEPs cited: SEP-986 tool names, SEP-973 icons and metadata, SEP-1303 input validation errors, SEP-1613 JSON Schema 2020-12, SEP-2106 schema composition and any-JSON structured content, SEP-2133 extensions, SEP-2243 routing headers, SEP-2322 multi-round-trip results, SEP-2549 list caching, SEP-2575 statelessness.
+- Security best practices (a documentation page, not part of the normative specification): <https://modelcontextprotocol.io/docs/2026-07-28/tutorials/security/security_best_practices>. Source of the state handle hijacking guidance.
 - Conformance suite: <https://github.com/modelcontextprotocol/conformance> (`npx @modelcontextprotocol/conformance server --url <url>`).
 - Official Swift SDK, for comparison: <https://github.com/modelcontextprotocol/swift-sdk> (0.12.1, implements 2025-11-25).
 
