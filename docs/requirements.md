@@ -40,7 +40,7 @@ Both eras are served on the same endpoint or process.
 - Reject a request missing `io.modelcontextprotocol/protocolVersion` or `io.modelcontextprotocol/clientCapabilities` with `-32602` (*2026-07-28 basic*).
 - An unsupported revision in `_meta` gets `-32022` listing only the modern revisions, because a legacy revision cannot be used in `_meta`; older revisions use `initialize`. The spec's own dual-era example also lists legacy revisions; this is a deliberate narrowing.
 - Notifications carry no revision under 2026-07-28, so they are routed without revision checks and never answered.
-- `io.modelcontextprotocol/clientInfo` is recorded for logging only.
+- `io.modelcontextprotocol/clientInfo` (and `clientInfo` from `initialize`, when a legacy client sent it on the same stream) is passed to the host in [server events](#server-events) for logging only. It is self-reported and never used for decisions.
 - Implement `server/discover` returning `supportedVersions`, capabilities, instructions, `ttlMs` and `cacheScope` (*2026-07-28 server/discover*).
 - Every result carries `resultType: "complete"` and `io.modelcontextprotocol/serverInfo` in `_meta` (*2026-07-28 basic*).
 
@@ -80,7 +80,7 @@ Both eras are served on the same endpoint or process.
   - a closed value set is a plain `enum`, and each case's description is listed in the property description, because `enum` cannot carry per-case descriptions portably;
   - an optional Swift property is omitted from `required`. Whether to emit OpenAI strict-mode shape instead (every property required, optional values nullable) is an [engineering question](decisions.md#engineering-questions).
 
-  A wider 2020-12 feature (allowed by *2026-07-28 basic*, SEP-2106) is an explicit opt-in on that tool. The profile goes beyond the spec.
+  A wider 2020-12 feature (allowed by *2026-07-28 basic*, SEP-2106) will be an explicit opt-in on that tool. The opt-in is deferred until a consumer needs it; until then registration rejects such schemas. The profile goes beyond the spec.
 - Numeric ranges, string lengths, patterns, formats and item counts appear in the schema when the type declares them. Which of these the portable profile keeps is decided by the strict-mode test in [decisions](decisions.md#engineering-questions).
 - Schemas never emit `x-mcp-header` (*2026-07-28 server/tools*).
 - A tool with an output type always returns `structuredContent` that conforms to its `outputSchema` (*2026-07-28 server/tools*, output schema). Some clients fail a call that declares an output schema and returns none.
@@ -94,9 +94,9 @@ Both eras are served on the same endpoint or process.
 
 Agents work best with bounded results that say how to get more. The library supplies one convention for this:
 
-- **Pagination.** A tool that pages its results has a `cursor` input and a `nextCursor` output. `nextCursor` is absent when there are no more results. The library supplies the descriptions of both fields, which tell the agent to pass `nextCursor` back as `cursor` and not to construct cursors itself. Registration fails if a tool has one field without the other.
-- **Truncation.** A tool that cuts a result short includes a `truncation` output value with what was omitted and a message telling the agent how to narrow the request, for example "Showing 50 of 1,240 messages. Add `contains` or a date range to narrow the search." The library supplies the type and the message format; the tool supplies the counts and the narrowing advice.
-- An unknown or expired cursor is a tool error with code `invalid_cursor` that tells the agent to repeat the call without a cursor.
+- **Pagination.** A tool that pages its results has an optional string `cursor` input and an optional string `nextCursor` output. `nextCursor` is absent when there are no more results. The author documents both fields like any other; registration appends the library's guidance to their descriptions: pass `nextCursor` back as `cursor` to continue, and never construct or modify a cursor. Registration fails if a tool has one field without the other.
+- **Truncation.** A tool that cuts a result short includes an optional `truncation` output of the library type `Truncation`, with `shown` (how many items are included), `total` (how many exist, when known) and `message`. The tool supplies the counts and its narrowing advice; the library writes the message, for example "Showing 50 of 1,240 messages. Add `contains` or a date range to narrow the search."
+- **Invalid cursors.** The library supplies the code (`invalid_cursor`), message and next step ("Repeat the call without `cursor` to start from the first page.") for an unknown or expired cursor, for the tool's own error type to return.
 
 ### Listing
 
@@ -170,7 +170,7 @@ Argument errors and tool errors share one shape, versioned by `schemaVersion`:
 - Every request carries a caller identity: a short label for a configured client connection, such as `claude-code`, `codex`, `chatgpt-tunnel` or `muse`. It matches `^[a-z0-9-]{1,32}$`.
 - The identity is a label for attribution and per-caller behavior, **not a security boundary**. Anyone who can reach the endpoint can present any label. Access control is the transport's reachability: loopback, a user-private Unix socket, or Tailscale policy. Handles bound to an identity are attributed, not authenticated.
 - The adapter resolves the identity from configuration the model cannot see or change. It never comes from tool arguments or `clientInfo`.
-  - Stream adapter: set at launch. An identity the server does not accept stops the process at startup with a message naming it.
+  - Stream adapter: set at launch. Starting with an identity the server does not accept throws a typed error naming it.
   - HTTP adapter: a path segment, `<base>/c/<identity>/mcp`. A request to an unknown identity gets `404` with a JSON-RPC error with no `id`, code `-32600`, whose message says the client URL must use an identity configured for this server.
 - The server declares the identities it accepts. There is no default identity.
 - Handlers and the host's event hook receive the identity. Tailscale identity headers (`Tailscale-User-Login`, `Tailscale-User-Name`), when present, are passed alongside it as information.
@@ -179,18 +179,18 @@ Argument errors and tool errors share one shape, versioned by `schemaVersion`:
 
 The host passes one event handler when it creates the server. The library calls it for:
 
-- every completed tool call: caller identity, tool name, outcome (`success`, `invalid_arguments`, the tool error code, or `internal_failure`) and duration;
+- every completed tool call: caller identity, the client's self-reported name and version when known, Tailscale login when present, tool name, outcome (`success`, `invalid_arguments`, the tool error code, or `internal_failure`) and duration;
 - every internal failure: caller identity, method, tool name when there is one, and the full error detail that the `-32603` response withholds;
 - every request rejected before dispatch: caller identity when known, the reason, and the response status.
 
-Events never contain argument values or results, so a host can log them without logging user data. The library writes nothing to standard output or standard error itself.
+Events never contain argument values or results, so a host can log them without logging user data. The library writes nothing to standard output or standard error itself. Startup problems (an identity the server does not accept, a Unix socket held by a live server, an unusable listener) are thrown as typed errors naming the problem; the consumer decides how to report them and exit.
 
 ## Transports
 
 ### Streamable HTTP
 
 - Listen on 127.0.0.1, a Unix domain socket, or both from one server. Never bind a non-loopback interface (*2026-07-28 basic/transports/streamable-http*, security).
-- A Unix socket's directory is owner-only (`0700`) and the socket is owner-only (`0600`). Starting fails with a clear message if another live server already answers on the socket path; a stale socket file is replaced.
+- A Unix socket's directory is owner-only (`0700`) and the socket is owner-only (`0600`). Starting throws a typed error naming the path if another live server already answers on it; a stale socket file is replaced.
 - Serve one MCP path per accepted identity, `<base>/c/<identity>/mcp`. The base path is the path the adapter receives, so it is usually empty behind `tailscale serve --set-path`, which strips its prefix.
 - POST carries one JSON-RPC message. Requests are answered with `application/json`. Accepted notifications get `202 Accepted` with no body. An empty body is `-32700` with `400`. GET and DELETE on an MCP path get `405` with `Allow: POST` (*2025-11-25 basic/transports*); Claude Code sends one GET after a legacy `initialize` and continues on `405`.
 - Any other path, including OAuth discovery paths such as `/.well-known/oauth-protected-resource`, gets `404` with no body. The server does not advertise authorization.

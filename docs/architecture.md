@@ -121,7 +121,7 @@ Adapters resolve the identity; the core enforces that it is one the server accep
 
 ## Extension points
 
-Each is defined as a protocol and exercised by a test-only implementation; none ships an implementation. The "needs" column is work the extension brings with it; the seam alone does not provide it.
+Each is defined as a protocol and exercised by a test-only implementation; none ships an implementation. Seams are internal to the package until an accepted extension needs one to be public ([decisions](decisions.md#accepted)). The "needs" column is work the extension brings with it; the seam alone does not provide it.
 
 | Point | Future uses | Seam: inputs and outputs | Needs |
 |---|---|---|---|

@@ -9,7 +9,7 @@ Accepted choices, owner decisions still open, and engineering questions a test o
 - **Protocol types:** owned by this library and decoded leniently, instead of the official Swift SDK's. The SDK declares client experimental capabilities as `[String: String]`, which rejects the valid nested JSON ChatGPT sends, and implements only 2025-11-25. Drift is controlled by validating output against the official schemas. Owner.
 - **Agent ergonomics are mandatory:** descriptions, annotations and typed errors are required to register a tool, and argument errors are aggregated and detailed in the style of Pydantic. Owner.
 - **Caller identity is required** and comes from configuration the model cannot change. It is a label, not authentication. Owner requirement; the label reading is the maintainer's, because an unauthenticated tailnet or loopback caller can present any value.
-- **Dual-era server.** One endpoint serves 2026-07-28 statelessly and 2025-11-25 and 2025-06-18 through `initialize`, without HTTP sessions. Maintainer, from *2026-07-28 basic/versioning*.
+- **Dual-era server.** One endpoint serves 2026-07-28 statelessly and 2025-11-25, 2025-06-18 and 2025-03-26 through `initialize`, without HTTP sessions. Maintainer, from *2026-07-28 basic/versioning*.
 - **Transports:** Streamable HTTP through Hummingbird, and newline-delimited streams. JSON responses only. Maintainer, from research.
 - **Schema and validation engine:** swift-json-schema (schema builder, `@Schemable`, accumulated validation errors with JSON Pointers, 2020-12). Maintainer, from research.
 - **Error results and `outputSchema`.** The spec's rule that structured results conform to the output schema is read as applying to successful results. Error results carry the library's error shape instead. The official TypeScript and Python clients skip output validation when `isError` is set. Maintainer.
@@ -18,6 +18,9 @@ Accepted choices, owner decisions still open, and engineering questions a test o
 - **License:** MIT, matching messages-swift. Owner.
 - **2025-03-26 is supported.** HTTP requests without `MCP-Protocol-Version` are served as 2025-03-26, batches are accepted under that revision only, and output schemas and structured content are omitted for it. Owner, on the basis that the cost is small; messages-swift's own tests initialize with 2025-03-26.
 - **Minimum tool description length is a hard registration rule at 40 characters** (`ToolRules.minimumDescriptionLength`). It is a floor against empty or one-word descriptions, not a quality bar; review and evals judge quality. Owner delegated; maintainer.
+- **Extension seams stay internal until an extension is accepted.** The method table and the other seams are not public API before 1.0, so they can change while nothing depends on them. A consumer request for an extension decides what becomes public. Maintainer.
+- **Pagination API.** Authors document `cursor` and `nextCursor` like other fields and registration appends the library's guidance, rather than exempting them from the doc-comment rule. The library supplies the `Truncation` type and the invalid-cursor code, message and next step, because it cannot add a case to a consumer's error type. Maintainer.
+- **Startup errors are thrown, not printed.** The library never writes to standard output or error; startup problems are typed errors the consumer reports. Maintainer.
 - **Legacy HTTP cancellation is ignored.** Without sessions a `notifications/cancelled` request id is ambiguous across callers, so closing the connection is the only HTTP cancellation signal. Maintainer, from *2026-07-28 basic/patterns/cancellation*.
 
 ## Owner decisions
