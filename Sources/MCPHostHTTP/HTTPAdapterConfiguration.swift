@@ -11,10 +11,9 @@ public struct HTTPAdapterConfiguration: Sendable {
     }
 
     public var listener: Listener
-    /// Prefix before `/c/<identity>/mcp`, for example `/messages` behind `tailscale serve --set-path /messages`.
+    /// Prefix before `/c/<identity>/mcp` as the adapter receives it. Usually empty behind
+    /// `tailscale serve --set-path`, which strips its prefix. Identities come from the server.
     public var basePath: String
-    /// The identities served, one MCP path each. There is no default identity.
-    public var identities: Set<CallerIdentity>
     /// `Host` header values accepted, to prevent DNS rebinding.
     public var allowedHosts: Set<String>
     /// `Origin` header values accepted when the header is present.
@@ -25,14 +24,12 @@ public struct HTTPAdapterConfiguration: Sendable {
     public init(
         listener: Listener,
         basePath: String,
-        identities: Set<CallerIdentity>,
         allowedHosts: Set<String>,
         allowedOrigins: Set<String> = [],
         maxBodyBytes: Int = 1 << 20
     ) {
         self.listener = listener
         self.basePath = basePath
-        self.identities = identities
         self.allowedHosts = allowedHosts
         self.allowedOrigins = allowedOrigins
         self.maxBodyBytes = maxBodyBytes

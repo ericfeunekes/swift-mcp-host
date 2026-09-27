@@ -49,7 +49,7 @@ Both eras are served on the same endpoint or process.
 - `initialize` returns the negotiated version, server information, the `tools` capability and instructions. Accept `notifications/initialized`.
 - Answer `ping`. `ping` is removed in 2026-07-28 and is `-32601` there.
 - Under 2025-06-18 and later, reject JSON-RPC batches with `-32600` (removed in 2025-06-18).
-- Under 2025-03-26, accept batches of requests and notifications, which that revision requires servers to receive (*2025-03-26 basic*). Answer with an array of responses for the requests, in request order; a batch of only notifications gets `202`. An `initialize` inside a batch is `-32600`.
+- Under 2025-03-26, accept batches of requests and notifications, which that revision requires servers to receive (*2025-03-26 basic*). The revision is chosen once for the batch: over HTTP from the `MCP-Protocol-Version` header (absent or `2025-03-26`), on a stream from the negotiated revision. Answer with an array of responses for the requests, in request order, with HTTP `200` even when items are errors; a batch of only notifications gets `202`. An `initialize` item, or an item carrying 2026-07-28 `_meta`, is answered with `-32600` inside the array; other items are unaffected.
 - Under 2025-03-26, tool definitions omit `outputSchema` and `title`, and results omit `structuredContent`; the serialized JSON text block carries the value. Those fields were added in 2025-06-18.
 
 ## Server description
@@ -172,7 +172,7 @@ Argument errors and tool errors share one shape, versioned by `schemaVersion`:
 - The adapter resolves the identity from configuration the model cannot see or change. It never comes from tool arguments or `clientInfo`.
   - Stream adapter: set at launch. Starting with an identity the server does not accept throws a typed error naming it.
   - HTTP adapter: a path segment, `<base>/c/<identity>/mcp`. A request to an unknown identity gets `404` with a JSON-RPC error with no `id`, code `-32600`, whose message says the client URL must use an identity configured for this server.
-- The server declares the identities it accepts. There is no default identity.
+- The server declares the identities it accepts. There is no default identity. The server's list is the only list: the HTTP adapter passes every well-formed identity segment to the core, and a segment that is not a valid identity label is a path that does not exist (`404`, no body).
 - Handlers and the host's event hook receive the identity. Tailscale identity headers (`Tailscale-User-Login`, `Tailscale-User-Name`), when present, are passed alongside it as information.
 
 ## Server events
@@ -181,7 +181,7 @@ The host passes one event handler when it creates the server. The library calls 
 
 - every completed tool call: caller identity, the client's self-reported name and version when known, Tailscale login when present, tool name, outcome (`success`, `invalid_arguments`, the tool error code, or `internal_failure`) and duration;
 - every internal failure: caller identity, method, tool name when there is one, and the full error detail that the `-32603` response withholds;
-- every request rejected before dispatch: caller identity when known, the reason, and the response status.
+- every request the core rejects before dispatch: caller identity, the reason, and the response status. Requests an adapter rejects before they reach the core (a bad `Host` or `Origin`, an oversized body, a path that is not an MCP path, GET or DELETE) produce no event; the adapter also keeps its framework's logging off, so nothing reaches standard output or error.
 
 Events never contain argument values or results, so a host can log them without logging user data. The library writes nothing to standard output or standard error itself. Startup problems (an identity the server does not accept, a Unix socket held by a live server, an unusable listener) are thrown as typed errors naming the problem; the consumer decides how to report them and exit.
 
@@ -204,6 +204,7 @@ Events never contain argument values or results, so a host can log them without 
 ### Newline-delimited stream
 
 - One JSON-RPC message per line in each direction, UTF-8, with a size limit per message. Only protocol messages are written to the output stream.
+- A line over the size limit is discarded up to its newline and answered with `-32600` without an `id`; the stream continues.
 - The revision negotiated by `initialize` lasts for the life of the stream. A second `initialize` on the same stream is `-32600`.
 - `notifications/cancelled` cancels the named running request (*2026-07-28 basic/patterns/cancellation*).
 - End of input stops the server after in-flight requests finish or are cancelled.
