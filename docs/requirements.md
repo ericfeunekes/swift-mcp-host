@@ -17,7 +17,7 @@ Spec citations give the revision and page, for example *2026-07-28 server/tools*
 The server is dual-era (*2026-07-28 basic/versioning*, backward compatibility):
 
 - **Modern:** 2026-07-28. Every request carries its revision and client capabilities in `_meta`. No handshake and no state.
-- **Legacy:** 2025-11-25 and 2025-06-18, reached through `initialize`. Support for 2025-03-26 is an [open decision](decisions.md#owner-decisions).
+- **Legacy:** 2025-11-25, 2025-06-18 and 2025-03-26, reached through `initialize`.
 
 Both eras are served on the same endpoint or process.
 
@@ -31,7 +31,7 @@ Both eras are served on the same endpoint or process.
 | stdio | A request after `initialize`, without modern `_meta` | Served under the revision negotiated by `initialize`. This is the only state the server keeps, and it lasts for the process (*2026-07-28 basic/versioning*). |
 | HTTP | A request without modern `_meta` and with `MCP-Protocol-Version` naming a supported legacy revision | Served statelessly under that revision. The server never issues `Mcp-Session-Id`, which is optional in those revisions (*2025-11-25 basic/transports*), so no state links requests. |
 | HTTP | `initialize` without `MCP-Protocol-Version` | Accepted. Legacy clients send the header only after `initialize` (*2025-11-25 basic/transports*). |
-| HTTP | Any other request without modern `_meta` and without `MCP-Protocol-Version` | `400` with `-32600` stating that the header is required, unless 2025-03-26 support is accepted, in which case it is served as 2025-03-26 (*2026-07-28 basic/transports/streamable-http*). |
+| HTTP | Any other request without modern `_meta` and without `MCP-Protocol-Version` | Served as 2025-03-26, which did not define the header (*2026-07-28 basic/transports/streamable-http*). |
 
 ### Modern requests
 
@@ -44,7 +44,9 @@ Both eras are served on the same endpoint or process.
 
 - `initialize` returns the negotiated version, server information, the `tools` capability and instructions. Accept `notifications/initialized`.
 - Answer `ping`. `ping` is removed in 2026-07-28 and is `-32601` there.
-- Reject JSON-RPC batches with `-32600` (removed in 2025-06-18).
+- Under 2025-06-18 and later, reject JSON-RPC batches with `-32600` (removed in 2025-06-18).
+- Under 2025-03-26, accept batches of requests and notifications, which that revision requires servers to receive (*2025-03-26 basic*). Answer with an array of responses for the requests, in request order; a batch of only notifications gets `202`. An `initialize` inside a batch is `-32600`.
+- Under 2025-03-26, tool definitions omit `outputSchema` and `title`, and results omit `structuredContent`; the serialized JSON text block carries the value. Those fields were added in 2025-06-18.
 
 ## Server description
 
@@ -101,7 +103,7 @@ JSON-RPC errors are reserved for requests the model cannot fix by changing argum
 | Case | Code | HTTP, modern | HTTP, legacy |
 |---|---|---|---|
 | Unparseable JSON | `-32700` | 400 | 400 |
-| Not a single valid JSON-RPC request or notification, including a batch | `-32600` | 400 | 400 |
+| Not a single valid JSON-RPC request or notification, including a batch outside 2025-03-26 | `-32600` | 400 | 400 |
 | Unknown method | `-32601` | 404 | 200 |
 | Unknown tool, missing required `_meta`, request shape violation, unsupported `cursor` | `-32602` | 400 | 200 |
 | Header disagrees with the body, or a required header is missing or malformed | `-32020` | 400 | n/a |

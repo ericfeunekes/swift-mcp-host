@@ -20,7 +20,7 @@ Every request, whatever the transport, passes through the same stages in order:
 
 1. **Frame.** The adapter produces one JSON-RPC message plus transport metadata (headers, the resolved caller identity, a cancellation signal).
 2. **Identity.** Reject a missing or unknown caller identity.
-3. **Envelope.** Parse JSON-RPC. Reject batches and malformed messages.
+3. **Envelope.** Parse JSON-RPC. Reject malformed messages, and batches outside 2025-03-26.
 4. **Version.** Select the revision using the table in [requirements](requirements.md#selecting-the-revision). Reject unsupported revisions and header disagreements.
 5. **Dispatch.** Route by method to a capability. Core ships the lifecycle methods and `tools`.
 6. **Tool call.** Look up the tool, validate arguments against its type, invoke the handler with a context, and render the result or error.
