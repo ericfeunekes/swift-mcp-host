@@ -17,6 +17,14 @@ import Testing
         table.requests["test/echo"] = .init(eras: [.legacy, .modern]) { context, params in
             .success(["revision": .string(context.selection.revision?.rawValue ?? "handshake"), "params": params ?? .null])
         }
+        table.requests["test/wait"] = .init(eras: [.legacy, .modern]) { _, _ in
+            do {
+                try await Task.sleep(for: .seconds(10))
+                return .success(["cancelled": false])
+            } catch {
+                return .success(["cancelled": true])
+            }
+        }
         table.requests["test/fail"] = .init(eras: [.legacy, .modern]) { _, _ in
             .failure(.internalFailure(publicMessage: "The server failed; this is not caused by the arguments.", tool: nil, detail: "disk on fire"))
         }
@@ -48,6 +56,10 @@ import Testing
 
     static func modern(_ method: String, id: Int = 1, version: String = "2026-07-28", capabilities: String = "{}") -> String {
         #"{"jsonrpc":"2.0","id":\#(id),"method":"\#(method)","params":{"_meta":{"io.modelcontextprotocol/protocolVersion":"\#(version)","io.modelcontextprotocol/clientCapabilities":\#(capabilities)}}}"#
+    }
+
+    static func modernHeaders(_ method: String, version: String = "2026-07-28") -> [(String, String)] {
+        [("mcp-protocol-version", version), ("mcp-method", method)]
     }
 
     static func legacy(_ method: String, id: Int = 1) -> String {
@@ -82,7 +94,7 @@ import Testing
     // MARK: Caller identity
 
     @Test func unknownCallerIs404WithoutID() async throws {
-        let reply = try await http(Self.modern("test/echo"), headers: [("MCP-Protocol-Version", "2026-07-28")], caller: CallerIdentity("muse")!)
+        let reply = try await http(Self.modern("test/echo"), headers: Self.modernHeaders("test/echo"), caller: CallerIdentity("muse")!)
         #expect(reply.status == 404)
         #expect(code(reply) == -32600)
         #expect(reply.json?["id"] == nil)
@@ -92,7 +104,7 @@ import Testing
     // MARK: Modern selection
 
     @Test func modernRequestIsServedAndDecorated() async throws {
-        let reply = try await http(Self.modern("test/echo"), headers: [("mcp-protocol-version", "2026-07-28")])
+        let reply = try await http(Self.modern("test/echo"), headers: Self.modernHeaders("test/echo"))
         #expect(reply.status == 200)
         let result = reply.json?["result"]
         #expect(result?["revision"] == "2026-07-28")
@@ -109,37 +121,60 @@ import Testing
 
     @Test(arguments: ["2025-11-25", "2024-11-05", "2027-01-01"])
     func unsupportedModernVersionListsSupported(_ version: String) async throws {
-        let reply = try await http(Self.modern("test/echo", version: version), headers: [("MCP-Protocol-Version", version)])
+        let reply = try await http(Self.modern("test/echo", version: version), headers: Self.modernHeaders("test/echo", version: version))
         #expect(reply.status == 400)
         #expect(code(reply) == -32022)
         #expect(reply.json?["error"]?["data"]?["supported"] == ["2026-07-28"])
     }
 
-    @Test(arguments: [nil, "2025-11-25"] as [String?])
-    func modernHeaderMustMatchMeta(_ header: String?) async throws {
-        let reply = try await http(Self.modern("test/echo"), headers: header.map { [("MCP-Protocol-Version", $0)] } ?? [])
+    @Test(arguments: [
+        [("mcp-method", "test/echo")],
+        [("mcp-protocol-version", "2025-11-25"), ("mcp-method", "test/echo")],
+        [("mcp-protocol-version", "2026-07-28")],
+        [("mcp-protocol-version", "2026-07-28"), ("mcp-method", "tools/list")],
+        [("mcp-protocol-version", "2026-07-28"), ("mcp-method", "=?base64?!!!?=")],
+    ])
+    func modernHeadersMustMirrorTheBody(_ headers: [(String, String)]) async throws {
+        let reply = try await http(Self.modern("test/echo"), headers: headers)
         #expect(reply.status == 400)
         #expect(code(reply) == -32020)
+        #expect(recorder.events.contains { if case .rejected(_, _, 400) = $0 { true } else { false } })
+    }
+
+    @Test func headerNamesAreCaseInsensitiveAndBase64Decodes() async throws {
+        let encoded = "=?base64?" + Data("test/echo".utf8).base64EncodedString() + "?="
+        let reply = try await http(Self.modern("test/echo"), headers: [("MCP-PROTOCOL-VERSION", "2026-07-28"), ("Mcp-Method", encoded)])
+        #expect(reply.status == 200)
+    }
+
+    @Test func toolsCallNeedsAMatchingMcpName() async throws {
+        let call = #"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"read_messages","arguments":{},"_meta":{"io.modelcontextprotocol/protocolVersion":"2026-07-28","io.modelcontextprotocol/clientCapabilities":{}}}}"#
+        let missing = try await http(call, headers: Self.modernHeaders("tools/call"))
+        #expect(code(missing) == -32020)
+        let wrong = try await http(call, headers: Self.modernHeaders("tools/call") + [("mcp-name", "who_am_i")])
+        #expect(code(wrong) == -32020)
+        let right = try await http(call, headers: Self.modernHeaders("tools/call") + [("mcp-name", "read_messages")])
+        #expect(code(right) == -32601, "headers accepted; tools/call is not registered yet")
     }
 
     @Test(arguments: [nil, "[]", "\"none\""] as [String?])
     func modernRequestNeedsCapabilitiesObject(_ capabilities: String?) async throws {
         let body = capabilities.map { Self.modern("test/echo", capabilities: $0) }
             ?? #"{"jsonrpc":"2.0","id":1,"method":"test/echo","params":{"_meta":{"io.modelcontextprotocol/protocolVersion":"2026-07-28"}}}"#
-        let reply = try await http(body, headers: [("MCP-Protocol-Version", "2026-07-28")])
+        let reply = try await http(body, headers: Self.modernHeaders("test/echo"))
         #expect(reply.status == 400)
         #expect(code(reply) == -32602)
     }
 
     @Test func modernUnknownMethodIs404() async throws {
-        let reply = try await http(Self.modern("nope"), headers: [("MCP-Protocol-Version", "2026-07-28")])
+        let reply = try await http(Self.modern("nope"), headers: Self.modernHeaders("nope"))
         #expect(reply.status == 404)
         #expect(code(reply) == -32601)
         #expect(reply.json?["id"] == 1)
     }
 
     @Test func pingDoesNotExistInTheModernEra() async throws {
-        let reply = try await http(Self.modern("ping"), headers: [("MCP-Protocol-Version", "2026-07-28")])
+        let reply = try await http(Self.modern("ping"), headers: Self.modernHeaders("ping"))
         #expect(reply.status == 404)
         #expect(code(reply) == -32601)
     }
@@ -159,10 +194,11 @@ import Testing
         #expect(reply.json?["result"]?["revision"] == "2025-03-26")
     }
 
-    @Test func unknownLegacyHeaderIsRejected() async throws {
+    @Test func unknownHeaderRevisionListsEverySupportedRevision() async throws {
         let reply = try await http(Self.legacy("test/echo"), headers: [("MCP-Protocol-Version", "2024-11-05")])
         #expect(reply.status == 400)
-        #expect(code(reply) == -32600)
+        #expect(code(reply) == -32022)
+        #expect(reply.json?["error"]?["data"]?["supported"] == ["2025-03-26", "2025-06-18", "2025-11-25", "2026-07-28"])
     }
 
     @Test func modernHeaderWithoutMetaIsInvalidParams() async throws {
@@ -189,8 +225,14 @@ import Testing
     // MARK: Legacy selection over a stream
 
     @Test func streamRequestBeforeInitializeIsRejected() async throws {
-        let reply = try await stream(Self.legacy("test/echo"), session: StreamSession())
+        let reply = try await stream(Self.legacy("test/echo", id: 7), session: StreamSession())
         #expect(code(reply) == -32602)
+        #expect(reply.json?["id"] == 7)
+    }
+
+    @Test func pingIsAllowedBeforeInitialize() async throws {
+        let reply = try await stream(Self.legacy("ping"), session: StreamSession())
+        #expect(reply.json?["result"] == [:])
     }
 
     @Test func streamUsesTheNegotiatedRevision() async throws {
@@ -211,8 +253,38 @@ import Testing
         #expect(invalid.status == 202, "a notification gets no error response")
     }
 
+    @Test func modernNotificationOnAStreamIsAccepted() async throws {
+        let reply = try await stream(#"{"jsonrpc":"2.0","method":"notifications/cancelled","params":{"requestId":99}}"#, session: StreamSession())
+        #expect(reply.status == 202)
+        #expect(reply.json == nil)
+    }
+
+    @Test func cancelledNotificationStopsARunningStreamRequest() async throws {
+        let session = StreamSession()
+        let running = Task { try await stream(Self.modern("test/wait", id: 42), session: session) }
+        try await Task.sleep(for: .milliseconds(100))
+        _ = try await stream(#"{"jsonrpc":"2.0","method":"notifications/cancelled","params":{"requestId":42}}"#, session: session)
+        let reply = try await running.value
+        #expect(reply.json?["result"]?["cancelled"] == true)
+    }
+
+    @Test func requestIDLiteralIsEchoedExactly() async throws {
+        let reply = try await stream(#"{"jsonrpc":"2.0","id":1.0,"method":"ping"}"#, session: StreamSession())
+        let text = String(decoding: try reply.json!.serializedData(), as: UTF8.self)
+        #expect(text.contains("\"id\":1.0"))
+    }
+
+    @Test(arguments: [
+        (-32700, nil, 400), (-32600, ProtocolRevision.Era.legacy, 400), (-32600, .modern, 400),
+        (-32601, .legacy, 200), (-32601, .modern, 404), (-32602, .legacy, 200), (-32602, .modern, 400),
+        (-32020, .modern, 400), (-32022, .modern, 400), (-32603, .legacy, 500), (-32603, .modern, 500),
+    ] as [(Int, ProtocolRevision.Era?, Int)])
+    func statusFollowsTheProtocolErrorTable(_ code: Int, _ era: ProtocolRevision.Era?, _ status: Int) {
+        #expect(HTTPStatus.for(code, era: era) == status)
+    }
+
     @Test func internalFailureWithholdsDetailFromTheClient() async throws {
-        let reply = try await http(Self.modern("test/fail"), headers: [("MCP-Protocol-Version", "2026-07-28")])
+        let reply = try await http(Self.modern("test/fail"), headers: Self.modernHeaders("test/fail"))
         #expect(reply.status == 500)
         #expect(code(reply) == -32603)
         #expect(try !(reply.json?.serialized() ?? "").contains("disk on fire"))

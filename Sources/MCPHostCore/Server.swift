@@ -40,10 +40,12 @@ public struct HTTPRequestHeaders: Sendable {
     }
 }
 
-/// The state a stream keeps: the revision `initialize` negotiated, for the life of the stream.
-/// See docs/requirements.md#selecting-the-revision.
+/// The state a stream keeps: the revision `initialize` negotiated, for the life of the stream,
+/// and the requests still running, so `notifications/cancelled` can stop one.
+/// See docs/requirements.md#selecting-the-revision and #newline-delimited-stream.
 public actor StreamSession {
     public private(set) var negotiated: ProtocolRevision?
+    private var running: [RequestID: @Sendable () -> Void] = [:]
 
     public init() {}
 
@@ -51,6 +53,19 @@ public actor StreamSession {
         guard negotiated == nil else { return false }
         negotiated = revision
         return true
+    }
+
+    func track(_ id: RequestID, cancel: @escaping @Sendable () -> Void) {
+        running[id] = cancel
+    }
+
+    func finish(_ id: RequestID) {
+        running[id] = nil
+    }
+
+    /// Cancels a running request. Unknown or finished ids are ignored, as the spec allows.
+    func cancel(_ id: RequestID) {
+        running.removeValue(forKey: id)?()
     }
 }
 
@@ -125,84 +140,105 @@ public struct MCPServer: Sendable {
 
     public func handle(_ message: InboundMessage) async -> OutboundResponse {
         guard accepts(message.caller) else {
-            return reject(message, era: nil, error: .invalidRequest(
+            let error = ProtocolError.invalidRequest(
                 "The caller identity `\(message.caller)` is not configured for this server. Use a client URL or launch argument with an identity this server accepts."
-            ), status: 404, id: nil)
+            )
+            events(.rejected(caller: message.caller, reason: error.message, httpStatus: 404))
+            return encode(JSONRPC.response(id: nil, error: error), status: 404)
         }
-        let body: ClientBody
         switch JSONRPC.parse(message.body) {
-        case .success(let parsed): body = parsed
-        case .failure(let error): return reject(message, era: nil, error: error, status: 400, id: nil)
-        }
-        switch body {
-        case .batch:
+        case .failure(let error):
+            return encode(reject(message, Reply.error(error, id: nil, era: nil)))
+        case .success(.single(.failure(let error))):
+            return encode(reject(message, Reply.error(error, id: nil, era: nil)))
+        case .success(.single(.success(let clientMessage))):
+            return encode(await reply(to: clientMessage, from: message))
+        case .success(.batch):
             // Batches are part of 2025-03-26 only; see docs/requirements.md#legacy-requests.
-            return reject(message, era: nil, error: .invalidRequest(
+            // Each item is parsed separately so a batch can be answered item by item.
+            return encode(reject(message, Reply.error(.invalidRequest(
                 "JSON-RPC batches are not supported. Send one message per request."
-            ), status: 400, id: nil)
-        case .single(let clientMessage):
-            return await handle(clientMessage, from: message)
+            ), id: nil, era: nil)))
         }
     }
 
-    private func handle(_ clientMessage: ClientMessage, from message: InboundMessage) async -> OutboundResponse {
-        let id: RequestID?
-        let method: String
-        let params: JSONValue?
+    /// The answer to one message: a JSON-RPC response, or none for a notification.
+    struct Reply {
+        let json: JSONValue?
+        let httpStatus: Int
+        let rejection: String?
+
+        static let accepted = Reply(json: nil, httpStatus: 202, rejection: nil)
+
+        static func error(_ error: ProtocolError, id: RequestID?, era: ProtocolRevision.Era?) -> Reply {
+            Reply(json: JSONRPC.response(id: id, error: error), httpStatus: HTTPStatus.for(error.code, era: era), rejection: error.message)
+        }
+    }
+
+    func reply(to clientMessage: ClientMessage, from message: InboundMessage) async -> Reply {
         switch clientMessage {
-        case .request(let requestID, let name, let parameters): (id, method, params) = (requestID, name, parameters)
-        case .notification(let name, let parameters): (id, method, params) = (nil, name, parameters)
-        }
-
-        let selection: RevisionSelection
-        switch await RevisionSelection.select(method: method, params: params, transport: message.transport) {
-        case .success(let selected): selection = selected
-        case .failure(let failure):
-            guard id != nil else { return .accepted }
-            return reject(message, era: failure.era, error: failure.error, status: failure.httpStatus, id: id)
-        }
-
-        let context = RequestContext(server: self, caller: message.caller, selection: selection, transport: message.transport)
-        guard let id else {
+        case .notification(let method, let params):
+            // Notifications are never answered; they are routed in whatever era the stream or
+            // header indicates (2026-07-28 notifications carry no protocol version).
+            let selection = await RevisionSelection.notificationSelection(transport: message.transport)
+            let context = RequestContext(server: self, caller: message.caller, selection: selection, transport: message.transport)
             if let notification = methods.notifications[method] { await notification(context, params) }
             return .accepted
-        }
-        guard let entry = methods.requests[method], entry.eras.contains(selection.era) else {
-            return respond(error: .methodNotFound(method), id: id, era: selection.era)
-        }
-        switch await entry.handler(context, params) {
-        case .success(let result):
-            return respond(result: result, id: id, selection: selection)
-        case .failure(.protocolError(let error)):
-            return respond(error: error, id: id, era: selection.era)
-        case .failure(.internalFailure(let publicMessage, let tool, let detail)):
-            events(.internalFailure(caller: message.caller, method: method, tool: tool, detail: detail))
-            return respond(error: .internalError(publicMessage), id: id, era: selection.era)
+        case .request(let id, let method, let params):
+            let selection: RevisionSelection
+            switch await RevisionSelection.select(method: method, params: params, transport: message.transport) {
+            case .success(let selected): selection = selected
+            case .failure(let failure): return reject(message, .error(failure.error, id: id, era: failure.era))
+            }
+            let context = RequestContext(server: self, caller: message.caller, selection: selection, transport: message.transport)
+            guard let entry = methods.requests[method], entry.eras.contains(selection.era) else {
+                return .error(.methodNotFound(method), id: id, era: selection.era)
+            }
+            switch await run(entry, context: context, params: params, id: id) {
+            case .success(let result):
+                return Reply(json: JSONRPC.response(id: id, result: decorate(result, selection: selection)), httpStatus: 200, rejection: nil)
+            case .failure(.protocolError(let error)):
+                return .error(error, id: id, era: selection.era)
+            case .failure(.internalFailure(let publicMessage, let tool, let detail)):
+                events(.internalFailure(caller: message.caller, method: method, tool: tool, detail: detail))
+                return .error(.internalError(publicMessage), id: id, era: selection.era)
+            }
         }
     }
 
-    private func respond(result: JSONValue, id: RequestID, selection: RevisionSelection) -> OutboundResponse {
-        var result = result
-        if selection.era == .modern, case .object(var object) = result {
-            object["resultType"] = "complete"
-            var meta: OrderedDictionary<String, JSONValue> = [:]
-            if case .object(let existing)? = object["_meta"] { meta = existing }
-            meta["io.modelcontextprotocol/serverInfo"] = serverInfo(for: selection.revision)
-            object["_meta"] = .object(meta)
-            result = .object(object)
+    /// Runs a handler. On a stream the request is tracked so `notifications/cancelled` can stop it;
+    /// over HTTP the adapter cancels the calling task when the client disconnects.
+    private func run(
+        _ entry: MethodTable.Entry, context: RequestContext, params: JSONValue?, id: RequestID
+    ) async -> Result<JSONValue, MethodFailure> {
+        guard case .stream(let session) = context.transport else { return await entry.handler(context, params) }
+        let task = Task { await entry.handler(context, params) }
+        await session.track(id, cancel: { task.cancel() })
+        let result = await withTaskCancellationHandler { await task.value } onCancel: { task.cancel() }
+        await session.finish(id)
+        return result
+    }
+
+    private func decorate(_ result: JSONValue, selection: RevisionSelection) -> JSONValue {
+        guard case .modern(let revision, _) = selection, case .object(var object) = result else { return result }
+        object["resultType"] = "complete"
+        var meta: OrderedDictionary<String, JSONValue> = [:]
+        if case .object(let existing)? = object["_meta"] { meta = existing }
+        meta["io.modelcontextprotocol/serverInfo"] = serverInfo(for: revision)
+        object["_meta"] = .object(meta)
+        return .object(object)
+    }
+
+    private func reject(_ message: InboundMessage, _ reply: Reply) -> Reply {
+        if let reason = reply.rejection {
+            events(.rejected(caller: message.caller, reason: reason, httpStatus: reply.httpStatus))
         }
-        return encode(JSONRPC.response(id: id, result: result), status: 200)
+        return reply
     }
 
-    private func respond(error: ProtocolError, id: RequestID?, era: ProtocolRevision.Era?) -> OutboundResponse {
-        encode(JSONRPC.response(id: id, error: error), status: HTTPStatus.for(error.code, era: era))
-    }
-
-    private func reject(
-        _ message: InboundMessage, era: ProtocolRevision.Era?, error: ProtocolError, status: Int, id: RequestID?
-    ) -> OutboundResponse {
-        events(.rejected(caller: message.caller, reason: error.message, httpStatus: status))
-        return encode(JSONRPC.response(id: id, error: error), status: status)
+    private func encode(_ reply: Reply) -> OutboundResponse {
+        guard let json = reply.json else { return .accepted }
+        return encode(json, status: reply.httpStatus)
     }
 
     private func encode(_ value: JSONValue, status: Int) -> OutboundResponse {
@@ -210,12 +246,12 @@ public struct MCPServer: Sendable {
         OutboundResponse(body: Array(try! value.serializedData()), httpStatus: status)
     }
 
-    /// `Implementation` for the given revision; fields added in 2025-11-25 are omitted before it.
-    func serverInfo(for revision: ProtocolRevision?) -> JSONValue {
+    /// `Implementation` for a revision: `title` from 2025-06-18, `description` and `websiteUrl` from 2025-11-25.
+    func serverInfo(for revision: ProtocolRevision) -> JSONValue {
         var info: OrderedDictionary<String, JSONValue> = ["name": .string(description.name)]
-        if revision.map({ $0 >= .v2025_06_18 }) ?? true { info["title"] = .string(description.title) }
+        if revision >= .v2025_06_18 { info["title"] = .string(description.title) }
         info["version"] = .string(description.version)
-        if revision.map({ $0 >= .v2025_11_25 }) ?? true {
+        if revision >= .v2025_11_25 {
             if let text = description.description { info["description"] = .string(text) }
             if let url = description.websiteURL { info["websiteUrl"] = .string(url) }
         }
@@ -248,10 +284,20 @@ struct MethodTable: Sendable {
     var notifications: [String: @Sendable (RequestContext, JSONValue?) async -> Void] = [:]
 
     /// The standard tools-only server. Lifecycle and tool methods are added here as they land.
-    static let standard = MethodTable(requests: [
-        // `ping` exists before 2026-07-28 only (*2026-07-28 changelog*, SEP-2575).
-        "ping": Entry(eras: [.legacy]) { _, _ in .success([:]) },
-    ])
+    static let standard = MethodTable(
+        requests: [
+            // `ping` exists before 2026-07-28 only (*2026-07-28 changelog*, SEP-2575).
+            "ping": Entry(eras: [.legacy]) { _, _ in .success([:]) },
+        ],
+        notifications: [
+            // Only streams can cancel: over HTTP a request id is ambiguous without sessions,
+            // and closing the connection is the signal (*2026-07-28 basic/patterns/cancellation*).
+            "notifications/cancelled": { context, params in
+                guard case .stream(let session) = context.transport, let id = params?["requestId"].flatMap(RequestID.init) else { return }
+                await session.cancel(id)
+            },
+        ]
+    )
 }
 
 enum HTTPStatus {

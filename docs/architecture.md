@@ -28,20 +28,22 @@ let response: OutboundResponse = await server.handle(InboundMessage(body: bytes,
 |---|---|
 | `InboundMessage` | The raw body, the caller identity the adapter resolved, and the transport: `.http(HTTPRequestHeaders)` or `.stream(StreamSession)` |
 | `HTTPRequestHeaders` | Request headers with case-insensitive lookup |
-| `StreamSession` | Per-stream state: the revision `initialize` negotiated. One per stream; HTTP has none |
+| `StreamSession` | Per-stream state: the revision `initialize` negotiated and the requests still running, so `notifications/cancelled` can stop one. One per stream; HTTP has none |
 | `OutboundResponse` | A body to write (or `nil` for nothing: `202` over HTTP, no line on a stream) and the HTTP status |
 | `ServerEvent` | Tool calls, internal failures and rejections, for the host to log |
 
 Inside `handle`, every message passes through the same stages in order:
 
 1. **Identity.** An identity the server does not accept is `404` with `-32600`.
-2. **Envelope.** Parse JSON-RPC (`JSONRPC.parse`). Reject malformed messages and, outside 2025-03-26, batches.
-3. **Revision.** `RevisionSelection.select` applies the table in [requirements](requirements.md#selecting-the-revision). The result is `.modern(revision, clientCapabilities:)`, `.legacy(revision)` or `.handshake` for `initialize`.
-4. **Dispatch.** `MethodTable` maps a method name to a handler and the eras the method exists in. A method missing from the table or from the era is `-32601`. Notifications run their handler if one is registered and always get `202`.
+2. **Envelope.** Parse JSON-RPC (`JSONRPC.parse`). Each batch item is parsed on its own so a batch can be answered item by item; batches are rejected until 2025-03-26 batch support lands. Malformed messages are rejected.
+3. **Revision.** `RevisionSelection.select` applies the table in [requirements](requirements.md#selecting-the-revision), including the modern `MCP-Protocol-Version`, `Mcp-Method` and `Mcp-Name` checks. The result is `.modern(revision, clientCapabilities:)`, `.legacy(revision)` or `.handshake` (for `initialize`, and for `ping` before `initialize` on a stream). Notifications use `notificationSelection` and never fail.
+4. **Dispatch.** `MethodTable` maps a method name to a handler and the eras the method exists in. A method missing from the table or from the era is `-32601`. Notifications run their handler if one is registered and always get `202`. On a stream, each request is tracked in its `StreamSession` while it runs, and the standard `notifications/cancelled` handler cancels it by id.
 5. **Handle.** A handler receives a `RequestContext` (server, caller, selection, transport) and the params, and returns a result or a `MethodFailure`: a protocol error, or an internal failure whose detail goes only to the event handler.
-6. **Encode.** Modern results get `resultType: "complete"` and `io.modelcontextprotocol/serverInfo` in `_meta`. `HTTPStatus.for(code, era:)` maps error codes to status per era.
+6. **Encode.** `reply(to:from:)` produces a `Reply` (a JSON value or none, and a status) for one message, so batch support can combine replies. Modern results get `resultType: "complete"` and `io.modelcontextprotocol/serverInfo` in `_meta`. `HTTPStatus.for(code, era:)` is the only mapping from error code to status; the unknown-identity `404` is the one exception.
 
-The standard method table holds `ping` today. The lifecycle methods (`initialize`, `notifications/initialized`, `server/discover`) and the tool methods (`tools/list`, `tools/call`) are added to it by their own changes. Rendering that differs by revision (fields added in later revisions, 2025-03-26 omissions) happens in the handler for that method, using the selection's revision.
+The standard method table holds `ping` and `notifications/cancelled` today. The lifecycle methods (`initialize`, `notifications/initialized`, `server/discover`) and the tool methods (`tools/list`, `tools/call`) are added to it by their own changes. Rendering that differs by revision (fields added in later revisions, 2025-03-26 omissions) happens in the handler for that method, using the selection's revision; `initialize` has no revision in its selection and must pass the negotiated revision to `serverInfo(for:)`.
+
+The stream adapter must hand each line to `handle` concurrently, so a `notifications/cancelled` line can arrive while the request it names is running.
 
 Tool handlers never see revision differences.
 

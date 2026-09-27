@@ -6,6 +6,15 @@ public enum RequestID: Hashable, Sendable {
     case string(String)
     case number(JSONNumberLiteral)
 
+    /// A string or integer; the literal is kept so the response echoes exactly what the client sent.
+    init?(_ value: JSONValue) {
+        switch value {
+        case .string(let id): self = .string(id)
+        case .numberLiteral(let id) where id.isInteger: self = .number(id)
+        default: return nil
+        }
+    }
+
     var jsonValue: JSONValue {
         switch self {
         case .string(let value): .string(value)
@@ -20,10 +29,11 @@ enum ClientMessage: Sendable {
     case notification(method: String, params: JSONValue?)
 }
 
-/// The body of a POST or a stream line: one message or, only under 2025-03-26, a batch.
+/// The body of a POST or a stream line: one message or, only under 2025-03-26, a batch. Each
+/// item is parsed on its own, so an invalid item can be answered without failing the others.
 enum ClientBody: Sendable {
-    case single(ClientMessage)
-    case batch([ClientMessage])
+    case single(Result<ClientMessage, ProtocolError>)
+    case batch([Result<ClientMessage, ProtocolError>])
 }
 
 /// A JSON-RPC error the server returns. See docs/requirements.md#protocol-errors.
@@ -76,16 +86,9 @@ enum JSONRPC {
         switch value {
         case .array(let items):
             guard !items.isEmpty else { return .failure(.invalidRequest("An empty batch is not a valid JSON-RPC message.")) }
-            var messages: [ClientMessage] = []
-            for item in items {
-                switch message(item) {
-                case .success(let message): messages.append(message)
-                case .failure(let error): return .failure(error)
-                }
-            }
-            return .success(.batch(messages))
+            return .success(.batch(items.map(message)))
         default:
-            return message(value).map(ClientBody.single)
+            return .success(.single(message(value)))
         }
     }
 
@@ -106,16 +109,11 @@ enum JSONRPC {
         if let params {
             guard case .object = params else { return .failure(.invalidRequest("\"params\" must be an object.")) }
         }
-        switch object["id"] {
-        case nil:
-            return .success(.notification(method: method, params: params))
-        case .string(let id)?:
-            return .success(.request(id: .string(id), method: method, params: params))
-        case .numberLiteral(let id)? where id.isInteger:
-            return .success(.request(id: .number(id), method: method, params: params))
-        default:
+        guard let rawID = object["id"] else { return .success(.notification(method: method, params: params)) }
+        guard let id = RequestID(rawID) else {
             return .failure(.invalidRequest("A JSON-RPC request id must be a string or an integer."))
         }
+        return .success(.request(id: id, method: method, params: params))
     }
 
     static func response(id: RequestID?, result: JSONValue) -> JSONValue {

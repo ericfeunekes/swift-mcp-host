@@ -27,8 +27,10 @@ Both eras are served on the same endpoint or process.
 |---|---|---|
 | Any | Request `_meta` carries `io.modelcontextprotocol/protocolVersion` | Modern. A supported value is served under that revision; an unsupported value gets `-32022` (UnsupportedProtocolVersion) listing supported versions. |
 | Any | `initialize` request | Legacy. The server answers with the client's requested version when it is a supported legacy version, and otherwise with 2025-11-25 (*2025-11-25 basic/lifecycle*). It never answers `initialize` with 2026-07-28. |
+| stdio | `ping` before `initialize` | Answered (*2025-11-25 basic/lifecycle* allows pings before initialization). |
 | stdio | Any other request before `initialize` | Error `-32602` stating that the request needs either modern `_meta` or a prior `initialize`. |
 | stdio | A request after `initialize`, without modern `_meta` | Served under the revision negotiated by `initialize`. This is the only state the server keeps, and it lasts for the process (*2026-07-28 basic/versioning*). |
+| HTTP | A request without modern `_meta` and with `MCP-Protocol-Version` naming a revision the server does not support | `400` with `-32022` listing every supported revision. |
 | HTTP | A request without modern `_meta` and with `MCP-Protocol-Version` naming a supported legacy revision | Served statelessly under that revision. The server never issues `Mcp-Session-Id`, which is optional in those revisions (*2025-11-25 basic/transports*), so no state links requests. |
 | HTTP | `initialize` without `MCP-Protocol-Version` | Accepted. Legacy clients send the header only after `initialize` (*2025-11-25 basic/transports*). |
 | HTTP | Any other request without modern `_meta` and without `MCP-Protocol-Version` | Served as 2025-03-26, which did not define the header (*2026-07-28 basic/transports/streamable-http*). |
@@ -36,6 +38,8 @@ Both eras are served on the same endpoint or process.
 ### Modern requests
 
 - Reject a request missing `io.modelcontextprotocol/protocolVersion` or `io.modelcontextprotocol/clientCapabilities` with `-32602` (*2026-07-28 basic*).
+- An unsupported revision in `_meta` gets `-32022` listing only the modern revisions, because a legacy revision cannot be used in `_meta`; older revisions use `initialize`. The spec's own dual-era example also lists legacy revisions; this is a deliberate narrowing.
+- Notifications carry no revision under 2026-07-28, so they are routed without revision checks and never answered.
 - `io.modelcontextprotocol/clientInfo` is recorded for logging only.
 - Implement `server/discover` returning `supportedVersions`, capabilities, instructions, `ttlMs` and `cacheScope` (*2026-07-28 server/discover*).
 - Every result carries `resultType: "complete"` and `io.modelcontextprotocol/serverInfo` in `_meta` (*2026-07-28 basic*).
@@ -114,7 +118,7 @@ JSON-RPC errors are reserved for requests the model cannot fix by changing argum
 | Unknown method | `-32601` | 404 | 200 |
 | Unknown tool, missing required `_meta`, request shape violation, unsupported `cursor` | `-32602` | 400 | 200 |
 | Header disagrees with the body, or a required header is missing or malformed | `-32020` | 400 | n/a |
-| Unsupported protocol revision | `-32022` | 400 | n/a |
+| Unsupported protocol revision in `_meta` or in the `MCP-Protocol-Version` header | `-32022` | 400 | 400 |
 | Failure inside the library | `-32603` | 500 | 500 |
 
 - `MCP-Protocol-Version` must equal the `_meta` revision on modern requests. `Mcp-Method` must equal the method and `Mcp-Name` the tool name on `tools/call`, decoding the `=?base64?…?=` form (*2026-07-28 basic/transports/streamable-http*, SEP-2243).
