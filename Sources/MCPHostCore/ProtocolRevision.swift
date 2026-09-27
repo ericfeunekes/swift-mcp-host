@@ -3,6 +3,7 @@
 /// Legacy revisions are reached through `initialize`; the modern revision is
 /// carried in every request's `_meta`. See docs/requirements.md#protocol-revisions.
 public enum ProtocolRevision: String, CaseIterable, Comparable, Sendable {
+    case v2025_03_26 = "2025-03-26"
     case v2025_06_18 = "2025-06-18"
     case v2025_11_25 = "2025-11-25"
     case v2026_07_28 = "2026-07-28"
@@ -16,7 +17,7 @@ public enum ProtocolRevision: String, CaseIterable, Comparable, Sendable {
 
     public var era: Era {
         switch self {
-        case .v2025_06_18, .v2025_11_25: .legacy
+        case .v2025_03_26, .v2025_06_18, .v2025_11_25: .legacy
         case .v2026_07_28: .modern
         }
     }

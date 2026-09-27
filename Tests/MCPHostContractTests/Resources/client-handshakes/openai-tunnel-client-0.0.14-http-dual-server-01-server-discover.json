@@ -1,0 +1,31 @@
+{
+  "client": "openai-tunnel-client-0.0.14",
+  "transport": "http",
+  "serverOffered": "2026-07-28 and legacy",
+  "body": {
+    "jsonrpc": "2.0",
+    "id": 1,
+    "method": "server/discover",
+    "params": {
+      "_meta": {
+        "io.modelcontextprotocol/clientCapabilities": {
+          "roots": {
+            "listChanged": true
+          }
+        },
+        "io.modelcontextprotocol/clientInfo": {
+          "name": "tunnel-client",
+          "version": "0.0.14"
+        },
+        "io.modelcontextprotocol/protocolVersion": "2026-07-28"
+      }
+    }
+  },
+  "headers": {
+    "user-agent": "Go-http-client/1.1",
+    "accept": "application/json, text/event-stream",
+    "content-type": "application/json",
+    "mcp-method": "server/discover",
+    "mcp-protocol-version": "2026-07-28"
+  }
+}

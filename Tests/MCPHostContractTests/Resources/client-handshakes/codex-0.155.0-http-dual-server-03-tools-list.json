@@ -1,0 +1,21 @@
+{
+  "client": "codex-0.155.0",
+  "transport": "http",
+  "serverOffered": "2026-07-28 and legacy",
+  "body": {
+    "jsonrpc": "2.0",
+    "id": 1,
+    "method": "tools/list",
+    "params": {
+      "_meta": {
+        "progressToken": 0
+      }
+    }
+  },
+  "headers": {
+    "user-agent": "codex-mcp-client/0.155.0",
+    "mcp-protocol-version": "2025-06-18",
+    "accept": "text/event-stream, application/json",
+    "content-type": "application/json"
+  }
+}

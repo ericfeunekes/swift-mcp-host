@@ -1,0 +1,16 @@
+{
+  "client": "claude-code-2.1.283",
+  "transport": "http",
+  "serverOffered": "legacy only",
+  "body": {
+    "method": "tools/list",
+    "jsonrpc": "2.0",
+    "id": 1
+  },
+  "headers": {
+    "accept": "application/json, text/event-stream",
+    "content-type": "application/json",
+    "user-agent": "claude-code/2.1.283 (sdk-cli)",
+    "mcp-protocol-version": "2025-11-25"
+  }
+}

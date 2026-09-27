@@ -1,0 +1,10 @@
+{
+  "client": "claude-code-2.1.283",
+  "transport": "stdio",
+  "serverOffered": "legacy only",
+  "body": {
+    "method": "tools/list",
+    "jsonrpc": "2.0",
+    "id": 1
+  }
+}

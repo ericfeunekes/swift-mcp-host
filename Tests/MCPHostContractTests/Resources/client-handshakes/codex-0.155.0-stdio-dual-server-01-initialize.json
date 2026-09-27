@@ -1,0 +1,27 @@
+{
+  "client": "codex-0.155.0",
+  "transport": "stdio",
+  "serverOffered": "2026-07-28 and legacy",
+  "body": {
+    "jsonrpc": "2.0",
+    "id": 0,
+    "method": "initialize",
+    "params": {
+      "protocolVersion": "2025-06-18",
+      "capabilities": {
+        "experimental": {
+          "codex/auth-change": {}
+        },
+        "elicitation": {
+          "form": {},
+          "url": {}
+        }
+      },
+      "clientInfo": {
+        "name": "codex-mcp-client",
+        "title": "Codex",
+        "version": "0.155.0"
+      }
+    }
+  }
+}

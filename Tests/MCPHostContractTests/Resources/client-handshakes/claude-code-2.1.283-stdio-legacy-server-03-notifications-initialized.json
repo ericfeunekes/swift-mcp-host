@@ -1,0 +1,9 @@
+{
+  "client": "claude-code-2.1.283",
+  "transport": "stdio",
+  "serverOffered": "legacy only",
+  "body": {
+    "jsonrpc": "2.0",
+    "method": "notifications/initialized"
+  }
+}

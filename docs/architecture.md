@@ -7,26 +7,43 @@ The library separates what every MCP server must get right (the protocol contrac
 | Target | Owns | Depends on |
 |---|---|---|
 | `MCPHostCore` | Protocol value types, JSON-RPC handling, version negotiation, the request pipeline, tool registry, validation, error rendering, caller identity | swift-json-schema |
-| `MCPHostMacros` (not yet added) | Compile-time checks that tool types and errors carry descriptions and annotations; added with the [authoring API decision](decisions.md#owner-decisions) | swift-syntax |
+| `MCPHostMacrosPlugin` | The `@MCPTool`, `@MCPSchema` and `@MCPEnum` macros and their compile-time checks; declared in `MCPHostCore` | swift-syntax |
 | `MCPHostHTTP` | Streamable HTTP on loopback or a Unix socket: origin, host, header and body-size checks, cancellation on disconnect | `MCPHostCore`, Hummingbird |
 | `MCPHostStream` | Newline-delimited streams over stdio or file handles | `MCPHostCore` |
 | `MCPHostTesting` | Validation against the official MCP schemas today; a synthetic example server and a test client later | `MCPHostCore`, swift-json-schema |
+| `MCPHostExample` (planned) | An executable example server with the conformance suite's fixture tools, used by conformance and interoperability runs | `MCPHostCore`, both adapters |
 
 A consumer depends on `MCPHostCore` plus the adapters it uses. `MCPHostCore` has no transport or web-framework dependency.
 
 ## Request pipeline
 
-Every request, whatever the transport, passes through the same stages in order:
+Adapters own transport; the core owns everything a message means. The boundary between them is one call:
 
-1. **Frame.** The adapter produces one JSON-RPC message plus transport metadata (headers, the resolved caller identity, a cancellation signal).
-2. **Identity.** Reject a missing or unknown caller identity.
-3. **Envelope.** Parse JSON-RPC. Reject malformed messages, and batches outside 2025-03-26.
-4. **Version.** Select the revision using the table in [requirements](requirements.md#selecting-the-revision). Reject unsupported revisions and header disagreements.
-5. **Dispatch.** Route by method to a capability. Core ships the lifecycle methods and `tools`.
-6. **Tool call.** Look up the tool, validate arguments against its type, invoke the handler with a context, and render the result or error.
-7. **Encode.** Produce the result in the shape of the negotiated revision, including `_meta` and `resultType` where that revision requires them.
+```swift
+let server = MCPServer(description: ..., tools: try ToolRegistry([...]), identities: [...], events: { event in ... })
+let response: OutboundResponse = await server.handle(InboundMessage(body: bytes, caller: identity, transport: .http(headers)))
+```
 
-Protocol types are revision-aware at the encode stage only. Handlers never see revision differences.
+| Type | Role |
+|---|---|
+| `InboundMessage` | The raw body, the caller identity the adapter resolved, and the transport: `.http(HTTPRequestHeaders)` or `.stream(StreamSession)` |
+| `HTTPRequestHeaders` | Request headers with case-insensitive lookup |
+| `StreamSession` | Per-stream state: the revision `initialize` negotiated. One per stream; HTTP has none |
+| `OutboundResponse` | A body to write (or `nil` for nothing: `202` over HTTP, no line on a stream) and the HTTP status |
+| `ServerEvent` | Tool calls, internal failures and rejections, for the host to log |
+
+Inside `handle`, every message passes through the same stages in order:
+
+1. **Identity.** An identity the server does not accept is `404` with `-32600`.
+2. **Envelope.** Parse JSON-RPC (`JSONRPC.parse`). Reject malformed messages and, outside 2025-03-26, batches.
+3. **Revision.** `RevisionSelection.select` applies the table in [requirements](requirements.md#selecting-the-revision). The result is `.modern(revision, clientCapabilities:)`, `.legacy(revision)` or `.handshake` for `initialize`.
+4. **Dispatch.** `MethodTable` maps a method name to a handler and the eras the method exists in. A method missing from the table or from the era is `-32601`. Notifications run their handler if one is registered and always get `202`.
+5. **Handle.** A handler receives a `RequestContext` (server, caller, selection, transport) and the params, and returns a result or a `MethodFailure`: a protocol error, or an internal failure whose detail goes only to the event handler.
+6. **Encode.** Modern results get `resultType: "complete"` and `io.modelcontextprotocol/serverInfo` in `_meta`. `HTTPStatus.for(code, era:)` maps error codes to status per era.
+
+The standard method table holds `ping` today. The lifecycle methods (`initialize`, `notifications/initialized`, `server/discover`) and the tool methods (`tools/list`, `tools/call`) are added to it by their own changes. Rendering that differs by revision (fields added in later revisions, 2025-03-26 omissions) happens in the handler for that method, using the selection's revision.
+
+Tool handlers never see revision differences.
 
 ## Protocol types
 

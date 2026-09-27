@@ -1,0 +1,35 @@
+{
+  "client": "claude-code-2.1.283",
+  "transport": "stdio",
+  "serverOffered": "2026-07-28 and legacy",
+  "body": {
+    "method": "tools/call",
+    "params": {
+      "name": "spike_time",
+      "arguments": {},
+      "_meta": {
+        "io.modelcontextprotocol/protocolVersion": "2026-07-28",
+        "io.modelcontextprotocol/clientInfo": {
+          "name": "claude-code",
+          "title": "Claude Code",
+          "version": "2.1.283",
+          "description": "Anthropic's agentic coding tool",
+          "websiteUrl": "https://claude.com/claude-code"
+        },
+        "io.modelcontextprotocol/clientCapabilities": {
+          "roots": {
+            "listChanged": true
+          },
+          "elicitation": {
+            "form": {},
+            "url": {}
+          }
+        },
+        "claudecode/toolUseId": "toolu_bdrk_018nxNrnSJh84yf6kveyGC2e",
+        "progressToken": 1
+      }
+    },
+    "jsonrpc": "2.0",
+    "id": 1
+  }
+}

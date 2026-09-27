@@ -1,0 +1,9 @@
+{
+  "client": "codex-0.155.0",
+  "transport": "stdio",
+  "serverOffered": "legacy only",
+  "body": {
+    "jsonrpc": "2.0",
+    "method": "notifications/initialized"
+  }
+}

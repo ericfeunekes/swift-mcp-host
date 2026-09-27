@@ -1,0 +1,9 @@
+{
+  "client": "codex-0.155.0",
+  "transport": "stdio",
+  "serverOffered": "2026-07-28 and legacy",
+  "body": {
+    "jsonrpc": "2.0",
+    "method": "notifications/initialized"
+  }
+}

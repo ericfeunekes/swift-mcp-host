@@ -1,0 +1,15 @@
+{
+  "client": "claude-code-2.1.283",
+  "transport": "http",
+  "serverOffered": "legacy only",
+  "body": {
+    "jsonrpc": "2.0",
+    "method": "notifications/initialized"
+  },
+  "headers": {
+    "accept": "application/json, text/event-stream",
+    "content-type": "application/json",
+    "user-agent": "claude-code/2.1.283 (sdk-cli)",
+    "mcp-protocol-version": "2025-11-25"
+  }
+}

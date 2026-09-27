@@ -1,0 +1,18 @@
+{
+  "client": "claude-code-2.1.283",
+  "transport": "stdio",
+  "serverOffered": "legacy only",
+  "body": {
+    "method": "tools/call",
+    "params": {
+      "name": "spike_time",
+      "arguments": {},
+      "_meta": {
+        "claudecode/toolUseId": "toolu_bdrk_013bLpnjTbpYZ1btorq57KZG",
+        "progressToken": 2
+      }
+    },
+    "jsonrpc": "2.0",
+    "id": 2
+  }
+}

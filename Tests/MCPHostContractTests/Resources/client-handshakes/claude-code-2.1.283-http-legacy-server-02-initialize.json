@@ -1,0 +1,31 @@
+{
+  "client": "claude-code-2.1.283",
+  "transport": "http",
+  "serverOffered": "legacy only",
+  "body": {
+    "method": "initialize",
+    "params": {
+      "protocolVersion": "2025-11-25",
+      "capabilities": {
+        "roots": {
+          "listChanged": true
+        },
+        "elicitation": {}
+      },
+      "clientInfo": {
+        "name": "claude-code",
+        "title": "Claude Code",
+        "version": "2.1.283",
+        "description": "Anthropic's agentic coding tool",
+        "websiteUrl": "https://claude.com/claude-code"
+      }
+    },
+    "jsonrpc": "2.0",
+    "id": 0
+  },
+  "headers": {
+    "accept": "application/json, text/event-stream",
+    "content-type": "application/json",
+    "user-agent": "claude-code/2.1.283 (sdk-cli)"
+  }
+}

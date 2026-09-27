@@ -26,13 +26,23 @@ Accepted choices, owner decisions still open, and engineering questions a test o
 
 ## Engineering questions
 
-- Which protocol revisions and headers do Claude Code, Codex, the OpenAI tunnel client and Muse send today? Answer from their opening requests against the example server.
-- Which `Host` and `Origin` values arrive through Tailscale Serve, the OpenAI tunnel client and a Unix socket? The configured allow lists depend on it.
-- Does Hummingbird 2.26 listen on a Unix domain socket in a way `tailscale serve unix:` can reach on macOS?
-- Should optional properties use OpenAI strict-mode shape (required and nullable)? Which constraint keywords (`minLength`, `pattern`, `format` and others) does strict mode accept today? Test with a live strict-mode call and with Claude and Codex, then fix the portable profile.
-- Does the resolved swift-syntax version use the toolchain's prebuilt copy, or rebuild from source for consumers?
-- ~~Can swift-json-schema's validation output supply every field of the argument error shape without forking it?~~ Yes: its validation errors carry the keyword and both the instance and keyword locations, from which the library reads the rejected input and the failing constraint.
-- Does swift-json-schema's number handling preserve integer values exactly at the MCP boundary?
+Open:
+
+- **Strict-mode schema shape.** Should optional properties use OpenAI strict-mode shape (required and nullable), and which constraint keywords does strict mode accept today? Needs a live OpenAI strict-mode call plus Claude and Codex runs against the example server. Until answered, optional properties are omitted from `required` and constraint keywords are emitted.
+- **Muse.** Which revision, headers, `Host` and `Origin` does Muse send through `tailscale serve`? Needs the owner to point Muse at the example server.
+- **Codex tool calls.** Codex's non-interactive mode refuses MCP tool calls under its approval policy, so its `tools/call` request has not been observed. Needs one interactive run by the owner.
+
+Answered on 2026-09-27 by experiment (captures and scripts were kept in the maintainer's scratch space; the results are recorded here):
+
+- **What clients send.** Claude Code 2.1.283 probes `server/discover` first on HTTP and stdio and stays on 2026-07-28 when the server supports it; against a legacy-only server it falls back to `initialize` with 2025-11-25 and sends one GET, tolerating `405`. It sends lowercase `mcp-method`, `mcp-protocol-version` and `mcp-name`, no `Origin` and no session id. Codex CLI 0.155.0 never probes: it sends `initialize` with 2025-06-18 on both transports, `mcp-protocol-version` afterwards, and no `Mcp-Method` or `Mcp-Name`; its stdio `initialize` carries a nested experimental capability object. The OpenAI tunnel client 0.0.14 speaks 2026-07-28 over HTTP with canonical-case headers, probes eagerly with an empty POST and a GET, and requests `/.well-known/oauth-protected-resource`. No surveyed client sends 2025-03-26; the legacy Python SDK 1.9.4 does.
+- **Claude Code fails silently on an invalid modern result.** A `tools/list` result missing `ttlMs` or `cacheScope` made Claude Code retry four times and then drop every tool without an error. Schema-contract tests of every emitted message are therefore essential, not optional.
+- **Host and Origin.** Through a Unix socket `Host` is `localhost`, directly or via `tailscale serve`; `tailscale serve` to TCP sends the machine's tailnet name. `Origin` is passed through unchanged. Serve adds `Tailscale-User-Login`, `Tailscale-User-Name`, `Tailscale-User-Profile-Pic` and `X-Forwarded-*`, and strips the `--set-path` prefix.
+- **Hummingbird 2.26 on a Unix socket.** Works, alone or together with 127.0.0.1 in one process, and `tailscale serve --set-path <path> unix:<socket>` reaches it. Hummingbird does not set socket permissions and silently replaces a socket held by a live server, so the adapter must set permissions and check for a live server before binding. A client disconnect, including through Serve, reaches a handler only through Hummingbird's inbound-close cancellation API; ordinary task cancellation does not happen. Bodies can be capped before buffering.
+- **swift-syntax build cost.** swift-syntax resolves to 604.0.0 and is compiled from source: about 2 minutes 20 seconds for a clean build on the Intel Mac. Swift 6.1's experimental prebuilt option finds no prebuilt copy for 604.0.0 or 601.0.1 on this machine. Accepted as a one-time build cost for consumers.
+- **Numbers.** Integers beyond double precision, up to the `Int64` limits, pass through a tool call exactly, and `3.0` is accepted as an integer (`NumberBoundaryTests`). Integers outside the `Int64` range and values such as `1e400` are rejected, but the issue has an empty path instead of the field's path; that is a defect to fix.
+- **swift-json-schema error detail.** Its validation errors carry the keyword and both the instance and keyword locations, so every field of the argument error shape can be filled without forking it.
+- **Conformance suite.** Version 0.2.0-alpha.11 is the first to cover 2026-07-28; the `latest` npm tag (0.1.16) covers only the older revisions, so the version must be pinned. Server mode tests HTTP only. Tool scenarios expect fixture tools with fixed names (for example `test_simple_text`, `test_error_handling`, `test_image_content`). Out-of-scope scenarios still check wire-schema validity, so the accepted-failures baseline is kept per check, not per scenario.
+- **Interoperability clients.** Legacy: TypeScript `@modelcontextprotocol/sdk` 1.30.1 (2025-11-25) and Python `mcp` 1.9.4 (2025-03-26). Modern: TypeScript `@modelcontextprotocol/client` 2.1.0 with version negotiation pinned to 2026-07-28 (it defaults to legacy), and Python `mcp` 2.2.0 using `discover()`. MCP Inspector 2.8.0 runs headless with `--cli` and `--protocol-era legacy|auto|modern`.
 
 ## Toolchain
 

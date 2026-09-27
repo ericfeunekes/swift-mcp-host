@@ -8,7 +8,7 @@ It is built for local macOS utilities that host their own engine (for example [m
 
 ## Status
 
-The authoring layer works: tools are declared with macros, registered, validated and called, with agent-facing errors. The protocol pipeline and the HTTP and stream adapters are not built yet. Nothing is released.
+The authoring layer works: tools are declared with macros, registered, validated and called, with agent-facing errors. The request pipeline parses messages, selects the protocol revision and maps errors to HTTP status. The lifecycle and tool methods, the HTTP and stream adapters and the example server are tracked as [Issues](https://github.com/ericfeunekes/swift-mcp-host/issues). Nothing is released.
 
 ## Development
 

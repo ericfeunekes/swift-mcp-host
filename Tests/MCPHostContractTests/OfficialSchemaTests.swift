@@ -15,8 +15,9 @@ import Testing
         #expect(Set(vendored) == Set(ProtocolRevision.allCases.map(\.rawValue)))
     }
 
-    @Test func draftSevenSchemaIsSafeToEvaluateAs2020_12() throws {
-        let schema = try OfficialSchema(revision: .v2025_06_18, directory: Self.directory)
+    @Test(arguments: [ProtocolRevision.v2025_03_26, .v2025_06_18])
+    func draftSevenSchemaIsSafeToEvaluateAs2020_12(_ revision: ProtocolRevision) throws {
+        let schema = try OfficialSchema(revision: revision, directory: Self.directory)
         #expect(schema.draftSevenOnlyKeywords.isEmpty)
     }
 

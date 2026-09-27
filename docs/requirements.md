@@ -63,7 +63,7 @@ Both eras are served on the same endpoint or process.
 - `openWorldHint` is true when the tool reaches the open internet or arbitrary external entities. A bounded private account or local data store is not open-world.
 - Every input and output property and every enum case needs a description. A Swift doc comment is the default source. This goes beyond the spec.
 - Names match `^[A-Za-z0-9_-]{1,64}$` and are unique within the server. This is the intersection of the MCP recommendation (*2025-11-25 server/tools*, SEP-986) and the Anthropic and OpenAI tool-name rules, so it goes beyond the spec.
-- The description states what the tool does, when to use it, when not to, and its limits. Enforcement of a minimum length is an [open decision](decisions.md#owner-decisions).
+- The description states what the tool does, when to use it, when not to, and its limits. It must be at least 40 characters; this is a floor against empty descriptions, not a quality bar (see [decisions](decisions.md#accepted)).
 
 ### Schemas
 
@@ -84,8 +84,15 @@ Both eras are served on the same endpoint or process.
 ### Results
 
 - A successful call returns `structuredContent` and the same value serialized as JSON in the first text content block. The text is derived from the structured value; the author cannot supply one without the other (*2026-07-28 server/tools*, backwards compatibility).
-- A tool may add image, audio, resource-link or embedded-resource blocks after that text block.
-- Results that can be large are bounded. The library supplies a standard truncation and pagination shape whose message tells the agent how to narrow the request.
+- A tool may add image, audio, resource-link or embedded-resource blocks after that text block by returning them alongside its output value. Binary data is base64-encoded by the library with the declared MIME type. Under 2025-03-26, which has no resource links, a resource link is rendered as a text block naming the resource and its URI.
+
+### Large results
+
+Agents work best with bounded results that say how to get more. The library supplies one convention for this:
+
+- **Pagination.** A tool that pages its results has a `cursor` input and a `nextCursor` output. `nextCursor` is absent when there are no more results. The library supplies the descriptions of both fields, which tell the agent to pass `nextCursor` back as `cursor` and not to construct cursors itself. Registration fails if a tool has one field without the other.
+- **Truncation.** A tool that cuts a result short includes a `truncation` output value with what was omitted and a message telling the agent how to narrow the request, for example "Showing 50 of 1,240 messages. Add `contains` or a date range to narrow the search." The library supplies the type and the message format; the tool supplies the counts and the narrowing advice.
+- An unknown or expired cursor is a tool error with code `invalid_cursor` that tells the agent to repeat the call without a cursor.
 
 ### Listing
 
@@ -111,7 +118,7 @@ JSON-RPC errors are reserved for requests the model cannot fix by changing argum
 | Failure inside the library | `-32603` | 500 | 500 |
 
 - `MCP-Protocol-Version` must equal the `_meta` revision on modern requests. `Mcp-Method` must equal the method and `Mcp-Name` the tool name on `tools/call`, decoding the `=?base64?…?=` form (*2026-07-28 basic/transports/streamable-http*, SEP-2243).
-- A `-32603` message names the tool and says the failure is on the server side, not the arguments. It does not expose internal error text. The full error goes to the host's logging hook.
+- A `-32603` message names the tool and says the failure is on the server side, not the arguments. It does not expose internal error text. The full error goes to the host through a [server event](#server-events).
 
 ### Argument errors
 
@@ -162,24 +169,38 @@ Argument errors and tool errors share one shape, versioned by `schemaVersion`:
   - Stream adapter: set at launch. An identity the server does not accept stops the process at startup with a message naming it.
   - HTTP adapter: a path segment, `<base>/c/<identity>/mcp`. A request to an unknown identity gets `404` with a JSON-RPC error with no `id`, code `-32600`, whose message says the client URL must use an identity configured for this server.
 - The server declares the identities it accepts. There is no default identity.
-- Handlers and the logging hook receive the identity. Tailscale identity headers, when present, are passed alongside it as information.
+- Handlers and the host's event hook receive the identity. Tailscale identity headers (`Tailscale-User-Login`, `Tailscale-User-Name`), when present, are passed alongside it as information.
+
+## Server events
+
+The host passes one event handler when it creates the server. The library calls it for:
+
+- every completed tool call: caller identity, tool name, outcome (`success`, `invalid_arguments`, the tool error code, or `internal_failure`) and duration;
+- every internal failure: caller identity, method, tool name when there is one, and the full error detail that the `-32603` response withholds;
+- every request rejected before dispatch: caller identity when known, the reason, and the response status.
+
+Events never contain argument values or results, so a host can log them without logging user data. The library writes nothing to standard output or standard error itself.
 
 ## Transports
 
 ### Streamable HTTP
 
-- Listen on a loopback address or a Unix domain socket. Never bind a non-loopback interface (*2026-07-28 basic/transports/streamable-http*, security).
-- Serve one MCP path per accepted identity under a configured base path.
-- POST carries one JSON-RPC message. Requests are answered with `application/json`. Accepted notifications get `202 Accepted` with no body. GET and DELETE get `405` (*2025-11-25 basic/transports*).
-- An `Origin` header that is present and not configured gets `403` (*2026-07-28 basic/transports/streamable-http*). A `Host` that is not configured gets `403`, to prevent DNS rebinding.
+- Listen on 127.0.0.1, a Unix domain socket, or both from one server. Never bind a non-loopback interface (*2026-07-28 basic/transports/streamable-http*, security).
+- A Unix socket's directory is owner-only (`0700`) and the socket is owner-only (`0600`). Starting fails with a clear message if another live server already answers on the socket path; a stale socket file is replaced.
+- Serve one MCP path per accepted identity, `<base>/c/<identity>/mcp`. The base path is the path the adapter receives, so it is usually empty behind `tailscale serve --set-path`, which strips its prefix.
+- POST carries one JSON-RPC message. Requests are answered with `application/json`. Accepted notifications get `202 Accepted` with no body. An empty body is `-32700` with `400`. GET and DELETE on an MCP path get `405` with `Allow: POST` (*2025-11-25 basic/transports*); Claude Code sends one GET after a legacy `initialize` and continues on `405`.
+- Any other path, including OAuth discovery paths such as `/.well-known/oauth-protected-resource`, gets `404` with no body. The server does not advertise authorization.
+- An `Origin` header that is present and not configured gets `403` (*2026-07-28 basic/transports/streamable-http*). None of the surveyed clients send `Origin`. A `Host` that is not configured gets `403`, to prevent DNS rebinding. The host configures the values it expects; observed values are `localhost` through a Unix socket (directly or from `tailscale serve`), `127.0.0.1:<port>` directly over TCP, and `<machine>.<tailnet>.ts.net` from `tailscale serve` to TCP.
+- Header names are matched case-insensitively. Claude Code sends `mcp-method`; the OpenAI tunnel client sends `Mcp-Method`.
 - Enforce the header rules in [protocol errors](#protocol-errors).
 - Limit the request body size before parsing; an oversized body gets `413`.
 - Concurrent requests are isolated: no request context is shared between calls, including calls that reuse a JSON-RPC id.
-- Closing the connection cancels the running handler. That is the only HTTP cancellation signal (*2026-07-28 basic/patterns/cancellation*). A legacy `notifications/cancelled` over HTTP gets `202` and is otherwise ignored, because without sessions its request id is ambiguous.
+- Closing the connection cancels the running handler, including when the client is behind `tailscale serve`, which passes the disconnect through. That is the only HTTP cancellation signal (*2026-07-28 basic/patterns/cancellation*). A legacy `notifications/cancelled` over HTTP gets `202` and is otherwise ignored, because without sessions its request id is ambiguous.
 
 ### Newline-delimited stream
 
 - One JSON-RPC message per line in each direction, UTF-8, with a size limit per message. Only protocol messages are written to the output stream.
+- The revision negotiated by `initialize` lasts for the life of the stream. A second `initialize` on the same stream is `-32600`.
 - `notifications/cancelled` cancels the named running request (*2026-07-28 basic/patterns/cancellation*).
 - End of input stops the server after in-flight requests finish or are cancelled.
 
