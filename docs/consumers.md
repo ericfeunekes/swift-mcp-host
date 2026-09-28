@@ -23,7 +23,12 @@ It belongs in the consumer when it is about that consumer's domain: which tools 
 
 ## Requesting a change
 
-Open a GitHub Issue at <https://github.com/ericfeunekes/swift-mcp-host/issues> with the **Consumer requirement** form. An agent may file with the GitHub CLI instead, using a body with exactly these headings, each filled in:
+A consumer submits a requirement in either of two ways; both use the same content and go through the same triage:
+
+- **A requirement document** (preferred for agents and for anything longer than a paragraph): a pull request adding `docs/requests/<consumer>-<short-name>.md`, with the pull request labelled `consumer-request`. See [docs/requests](requests/README.md).
+- **A GitHub Issue** at <https://github.com/ericfeunekes/swift-mcp-host/issues> with the **Consumer requirement** form, or with the GitHub CLI.
+
+Either way, the content uses exactly these headings, each filled in:
 
 ```markdown
 ### Consumer
@@ -43,20 +48,20 @@ Open a GitHub Issue at <https://github.com/ericfeunekes/swift-mcp-host/issues> w
 - **Spec basis:** the MCP section, SEP or client documentation it relies on, or "none".
 - **Proof available:** what the consumer can run to show it works.
 
-For example: `gh issue create --repo ericfeunekes/swift-mcp-host --label consumer-request --title "[consumer] <summary>" --body-file request.md`.
+For an Issue from the CLI: `gh issue create --repo ericfeunekes/swift-mcp-host --label consumer-request --title "[consumer] <summary>" --body-file request.md`.
 
 Use synthetic values only: no real user data, credentials or hostnames.
 
 ## From request to requirement
 
-1. **Triage.** The maintainer adds one label and a comment with the reason:
+1. **Triage.** The maintainer adds one label to the Issue or pull request and a comment with the reason:
    - `accepted`: it belongs here and will be specified;
    - `needs-decision`: it depends on an owner choice, recorded in [decisions](decisions.md);
    - `consumer-owned`: it belongs in the consumer, with a pointer to how the consumer can do it with the current library.
 2. **Decide.** An owner choice is recorded in [decisions](decisions.md) before anything depends on it. An engineering question gets a test or prototype.
 3. **Specify.** An accepted request becomes text in [requirements](requirements.md) under a heading, with its citation. Extensions go through the [extension points](architecture.md#extension-points).
 4. **Prove.** The change lands with the proof [validation](validation.md) requires for that layer.
-5. **Close.** The issue links to the requirement heading and the change.
+5. **Close.** The Issue or request document links to the requirement heading and the change. An accepted request document is removed once its content is in the requirements, so `docs/requests/` holds only requests still being decided; a `consumer-owned` request document is not merged.
 
 ## Compatibility for consumers
 
