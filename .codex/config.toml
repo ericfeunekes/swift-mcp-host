@@ -9,6 +9,3 @@ enabled = true
 
 [plugins."code-review@openai-bundled"]
 enabled = false
-
-[plugins."design-patterns@ai-marketplace-plugins"]
-enabled = true
